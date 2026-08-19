@@ -109,8 +109,10 @@ export function calculateZiweiHoroscope(input: ValidatedZiweiHoroscopeInput): Zi
   // layer (HoroscopeTargetSchema) — never round-tripped through a wall clock on the
   // "now" path, so no DST fold/gap can occur there.
   const targetInput = input.target;
-  const targetInstant = targetInput
-    ? wallToInstant(
+  let targetInstant: number;
+  if (targetInput) {
+    try {
+      targetInstant = wallToInstant(
         {
           year: targetInput.solarDate.year,
           month: targetInput.solarDate.month,
@@ -121,8 +123,18 @@ export function calculateZiweiHoroscope(input: ValidatedZiweiHoroscopeInput): Zi
         },
         natal.loc.timezone,
         targetInput.dstFold
-      ).instant
-    : Date.now();
+      ).instant;
+    } catch (err) {
+      // F5: time.ts is copied verbatim from bazi-mcp (spec §3, must stay byte-
+      // identical) and its only caller there is a birth date, so its error text says
+      // "the birth record" unconditionally. Re-word for the target path here — wrap,
+      // don't reimplement the validation. The DST-fold-ambiguous message doesn't
+      // mention "birth" at all, so it round-trips unchanged.
+      throw new Error((err as Error).message.replace('the birth record', 'the target date/time'));
+    }
+  } else {
+    targetInstant = Date.now();
+  }
 
   // ── Axis B: target local true solar time -> raw timeIndex (0-12), exactly like the
   // natal path (trueSolar toggle honored the same way).
@@ -334,12 +346,26 @@ export function calculateZiweiHoroscope(input: ValidatedZiweiHoroscopeInput): Zi
     targetLunarConv.lunarYear === natal.lunarConv.lunarYear &&
     yearlyGanZhiLichun === natal.yearGanZhi;
 
-  const decadalAgeAnchorLunarYear =
-    targetLunarConv.lunarYear < birthEpochLunarYear || inBirthOwnPreLichunSpan
-      ? natal.feedYear
-      : sixtyOffset !== 0
-        ? targetLunarConv.lunarYear + sixtyOffset
-        : undefined;
+  // F3: which mechanism(s) actually engaged the anchor, for diagnostics honesty.
+  // Recorded once here instead of re-derived from sixtyOffset/decadalAgeSource at the
+  // wire layer, since decadalAgeAnchorLunarYear === natal.feedYear is ambiguous on its
+  // own (the clamp branch and a sixtyOffset that happens to reduce to feedYear look
+  // identical downstream — only this condition tells them apart).
+  const firstYearClampApplied = targetLunarConv.lunarYear < birthEpochLunarYear || inBirthOwnPreLichunSpan;
+
+  const decadalAgeAnchorLunarYear = firstYearClampApplied
+    ? natal.feedYear
+    : sixtyOffset !== 0
+      ? targetLunarConv.lunarYear + sixtyOffset
+      : undefined;
+  const decadalAgeAnchorReason: 'sixtyYearOffset' | 'firstYearClamp' | 'sixtyYearOffsetAndFirstYearClamp' | undefined =
+    decadalAgeAnchorLunarYear === undefined
+      ? undefined
+      : firstYearClampApplied && sixtyOffset !== 0
+        ? 'sixtyYearOffsetAndFirstYearClamp'
+        : firstYearClampApplied
+          ? 'firstYearClamp'
+          : 'sixtyYearOffset';
   const feedLunarYearForYearly = lunarYearForGanZhi(yearlyGanZhi, targetLunarConv.lunarYear, 6, 1, false);
   const yearlyAnchorLunarYear = feedLunarYearForYearly !== targetLunarConv.lunarYear ? feedLunarYearForYearly : undefined;
 
@@ -430,7 +456,16 @@ export function calculateZiweiHoroscope(input: ValidatedZiweiHoroscopeInput): Zi
       sixtyYearOffsetApplied: sixtyOffset,
       decadalAgeSource: decadalAgeAnchorLunarYear === undefined ? 'true-target' : 'anchor',
       decadalAgeAnchorLunarYear,
-      note: `iztro 的虚岁计算方式为「目标农历年 − 喂入本命农历年 + 1」，本命喂入农历年为 ${natal.feedYear}（真实本命农历年为 ${natal.lunarConv.lunarYear}）。两者之差中，±60 的整数倍部分（此处 = ${sixtyOffset}）纯粹是为绕开 iztro 在腊月三十等短月上的崩溃（见 probe-findings P2a/P2b）而引入、无历法含义，若不补偿会直接摧毁虚岁/大限/小限；±1 的立春窗口分量则不补偿——那是使本命流年干支正确的必要偏移，让虚岁随之偏移正是立春流派本身的含义。`,
+      decadalAgeAnchorReason,
+      note:
+        `iztro 的虚岁计算方式为「目标农历年 − 喂入本命农历年 + 1」，本命喂入农历年为 ${natal.feedYear}（真实本命农历年为 ${natal.lunarConv.lunarYear}）。两者之差中，±60 的整数倍部分（此处 = ${sixtyOffset}）纯粹是为绕开 iztro 在腊月三十等短月上的崩溃（见 probe-findings P2a/P2b）而引入、无历法含义，若不补偿会直接摧毁虚岁/大限/小限；±1 的立春窗口分量则不补偿——那是使本命流年干支正确的必要偏移，让虚岁随之偏移正是立春流派本身的含义。` +
+        (decadalAgeAnchorReason === undefined
+          ? ' 本次目标虚岁/大限/小限直接取自目标真实日期的 horoscope() 调用，未启用锚定日期（既无需 ±60 补偿，也未触发首年钳制）。'
+          : decadalAgeAnchorReason === 'sixtyYearOffset'
+            ? ' 本次锚定仅由上述 ±60 补偿触发（首年钳制未触发）。'
+            : decadalAgeAnchorReason === 'firstYearClamp'
+              ? ` 本次锚定与 ±60 补偿无关（此处 sixtyYearOffsetApplied = ${sixtyOffset}），而是由「首年钳制」单独触发：目标瞬时尚未跨越出生喂入农历年 ${natal.feedYear} 自身的虚岁纪年起点（目标仍处于出生所在的真实农历年内，且尚未越过闭合该出生喂入年所需的立春/正月初一边界），若照公式原样相减，虚岁会读出 <=0 或错误地读成 2 ——因此强制锚定为出生喂入农历年本身，使虚岁读作 1（新生儿在自己生日当天虚岁为 1，而非 0 或 2，正是此钳制存在的意义）。`
+              : ` 本次锚定同时由 ±60 补偿与首年钳制共同触发：先以喂入农历年 ${natal.feedYear} 本身移除 ±60 噪音，随即因目标瞬时仍未跨越该喂入年自身的虚岁纪年起点而继续钳制为虚岁 1（两者共同作用，缺一都不能解释此处的锚定）。`),
     },
     yearlySource: yearlyAnchorLunarYear === undefined ? 'true-target' : 'anchor',
     yearlyAnchorLunarYear,

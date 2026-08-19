@@ -169,6 +169,12 @@ export interface ZiweiHoroscopeDiagnostics {
     sixtyYearOffsetApplied: number;
     decadalAgeSource: 'true-target' | 'anchor';
     decadalAgeAnchorLunarYear?: number;
+    /** Which mechanism(s) engaged the anchor (F3): the ±60 crash-avoidance
+     * compensation, the first-year clamp (a target that hasn't yet reached the
+     * birth's own 虚岁-1 epoch), both, or undefined when no anchor was used at all
+     * (decadalAgeSource === 'true-target'). See `note` for the case-specific
+     * explanation. */
+    decadalAgeAnchorReason?: 'sixtyYearOffset' | 'firstYearClamp' | 'sixtyYearOffsetAndFirstYearClamp';
     note: string;
   };
   yearlySource: 'true-target' | 'anchor';

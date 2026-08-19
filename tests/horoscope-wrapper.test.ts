@@ -16,10 +16,11 @@ import { expectHoroscope } from '../docs/horoscope-parity-reference.mjs';
  * this file is the independent audit of the WRAPPER, built around the three ways a
  * 运限 suite goes green while testing nothing:
  *
- *   1. The ±60 feed-year compensation is unreachable by accident. It engages for
- *      exactly 29 births in 1900-2100 (enumerated in SIXTY_SHIFT_BIRTHS below) and
- *      never for an ordinary one, so a suite of "normal" births passes with the
- *      compensation deleted. Every one of those 29 is swept against the oracle here.
+ *   1. The ±60 feed-year compensation is unreachable by accident. It engages only for
+ *      births in a handful of 立春↔正月初一 windows (enumerated in SIXTY_SHIFT_BIRTHS
+ *      below, whose header states exactly how complete that enumeration is) and never
+ *      for an ordinary one, so a suite of "normal" births passes with the compensation
+ *      deleted. Every listed birth is swept against the oracle here.
  *   2. Config-leak tests are structurally blind unless they CROSS charts: iztro's
  *      config is a module global that horoscope() reads lazily at call time, so a
  *      single-chart test cannot observe a leak. Every config test here interleaves
@@ -144,40 +145,52 @@ function compareAllScopes(
 const pad = (n: number) => String(n).padStart(2, '0');
 
 /**
- * The COMPLETE set of births in 1900-2100 for which the ±60 feed-year fallback fires
- * (enumerated by scanning every 腊月/正月 day that can land in the 立春↔正月初一 window
- * and keeping those whose shifted feed year has too few days — the crash
- * `lunarYearForGanZhi` dodges by jumping a full 60-year cycle). Both directions are
- * present: -60 (the fallback searched backwards) and +60 (forwards). Nothing outside
- * this list exercises the compensation at all, which is exactly why a suite built
- * from "normal" births cannot see it.
+ * Births in 1900-2100 for which the ±60 feed-year fallback fires — `[year, month, day,
+ * birthHour?]`, hour defaulting to 10. Enumerated by scanning every 腊月/正月 day that
+ * can land in the 立春↔正月初一 window and keeping those whose shifted feed year has too
+ * few days — the crash `lunarYearForGanZhi` dodges by jumping a full 60-year cycle.
+ * Both directions are present: -60 (the fallback searched backwards) and +60 (forwards).
+ * Nothing outside this window exercises the compensation at all, which is exactly why a
+ * suite built from "normal" births cannot see it.
+ *
+ * SCOPE OF THE CLAIM — read before adding to it: this is complete at DAY granularity
+ * for a birth hour of 10, which is how it was enumerated. Membership is not purely a
+ * property of the date: a birth ON 立春 day itself is inside the window only from the
+ * 立春 instant onward, so the same date can shift at an evening hour and not at a
+ * morning one. The last two entries are exactly that case (1962-02-04 shifts from h16,
+ * 2057-02-03 from h17; neither shifts at h10), found by an hour-granularity re-scan.
+ * A full day×hour enumeration over 1900-2100 has NOT been run, so more hour-dependent
+ * members may exist — do not restore a "COMPLETE" claim without running one.
  */
-const SIXTY_SHIFT_BIRTHS: Array<[number, number, number]> = [
+const SIXTY_SHIFT_BIRTHS: Array<[number, number, number] | [number, number, number, number]> = [
   [1901, 2, 18], [1904, 2, 15], [1907, 2, 12], [1910, 2, 9], [1915, 2, 13], [1926, 2, 12],
   [1940, 2, 7], [1950, 2, 16], [1953, 2, 13], [1959, 2, 7], [1969, 2, 16], [1977, 2, 17],
   [1986, 2, 8], [1996, 2, 18], [1999, 2, 15], [2002, 2, 11], [2005, 2, 8], [2015, 2, 18],
   [2021, 2, 11], [2024, 2, 9], [2048, 2, 13], [2064, 2, 16], [2067, 2, 13], [2073, 2, 6],
   [2076, 2, 4], [2083, 2, 16], [2086, 2, 13], [2095, 2, 4], [2100, 2, 8],
+  [1962, 2, 4, 18], [2057, 2, 3, 18],
 ];
 
 // ════════════════════════════════════════════════════════════════════════════════
 // Defect 1 — the ±60 feed-year compensation
 // ════════════════════════════════════════════════════════════════════════════════
-describe('运限 audit: defect 1 — ±60 feed-year compensation (the 29 births that can reach it)', () => {
+describe('运限 audit: defect 1 — ±60 feed-year compensation (the births that can reach it)', () => {
   it('every 1900-2100 birth that triggers the ±60 fallback matches the oracle on all six scopes', () => {
     // This is the load-bearing ±60 test. Deleting the compensation (forcing
-    // sixtyOffset = 0) shifts 虚岁 by exactly ±60 for all 29 births and drags
-    // 大限/小限 with it — verified by mutation, see the report.
+    // sixtyOffset = 0) shifts 虚岁 by exactly ±60 for every birth in the list and
+    // drags 大限/小限 with it — verified by mutation, see the report.
     const d = differ();
-    for (const [by, bm, bd] of SIXTY_SHIFT_BIRTHS) {
+    for (const [by, bm, bd, bh = 10] of SIXTY_SHIFT_BIRTHS) {
       for (const gender of ['male', 'female'] as const) {
-        const birth = { ...FRAME, solarDate: { year: by, month: bm, day: bd }, clockTime: { hour: 10, minute: 0 }, gender };
+        const birth = { ...FRAME, solarDate: { year: by, month: bm, day: bd }, clockTime: { hour: bh, minute: 0 }, gender };
         const natal = N(birth);
         const L = oracleNatalYear(natal);
-        d.ok(natal.lunar.isLeapMonth === false, `${by}-${bm}-${bd} unexpectedly a leap month`);
+        d.ok(natal.lunar.isLeapMonth === false, `${by}-${bm}-${bd} h${bh} unexpectedly a leap month`);
         // The whole point of the compensation: L is the TRUE (±1-shifted) lunar year,
-        // never the ±60-shifted feed year iztro was actually handed.
-        d.ok(natal.diagnostics.feedYear !== L, `${by}-${bm}-${bd} expected a ±60 feed shift, got feedYear ${natal.diagnostics.feedYear} == L`);
+        // never the ±60-shifted feed year iztro was actually handed. This also pins the
+        // list itself: an entry that stopped shifting (or an hour typo'd out of the
+        // window) fails here rather than silently degrading into an ordinary birth.
+        d.ok(natal.diagnostics.feedYear !== L, `${by}-${bm}-${bd} h${bh} expected a ±60 feed shift, got feedYear ${natal.diagnostics.feedYear} == L`);
 
         for (const [ty, tm, td, th] of [[L + 1, 6, 15, 13], [L + 30, 11, 3, 5], [L + 61, 3, 21, 0], [L + 7, 8, 30, 20]] as const) {
           if (ty > 2100) continue;
@@ -358,10 +371,11 @@ describe('运限 audit: defect 1c — a -1-window birth is 虚岁 1 on its own b
     expect(lichun.age.nominalAge).toBe(1);
   });
 
-  // None of the 29 SIXTY_SHIFT_BIRTHS (the only 1900-2100 births needing the ±60
-  // crash-avoidance compensation) is a -1-window birth -- all 29 are +1 (verified by
-  // computing feedYear - true lunar year for each and stripping the ±60 component).
-  // There is no combined ±60 x -1-window case in range to cover here.
+  // No SIXTY_SHIFT_BIRTHS entry (the known 1900-2100 births needing the ±60 crash-
+  // avoidance compensation) is a -1-window birth -- every one is +1 (verified by
+  // computing feedYear - true lunar year for each and stripping the ±60 component,
+  // including the two hour-dependent entries). There is no combined ±60 x -1-window
+  // case known in range to cover here.
 });
 
 // ════════════════════════════════════════════════════════════════════════════════
@@ -527,6 +541,66 @@ describe('运限 audit: defect 3 — config isolation ACROSS requests (a single-
     }
   });
 
+  /** Every 四化-marked natal star as `名字+化`, sorted — the natal-side observable that
+   * the horoscope tool's own outputs cannot show. */
+  const natalMarks = (c: ReturnType<typeof calculateZiweiChart>) =>
+    c.palaces.flatMap(p => [...p.majorStars, ...p.minorStars])
+      .filter(s => s.mutagen)
+      .map(s => `${s.name}${s.mutagen}`)
+      .sort();
+
+  /**
+   * CROSS-TOOL, H(override) -> N(plain). This is the direction the rest of this
+   * describe cannot see, and the one that actually rests on `withHoroscopeConfig`'s
+   * `finally { resetIztroConfig() }` (src/core/horoscope.ts) — nothing else.
+   *
+   * Why every other config test above stays green with that `finally` deleted: they
+   * observe the leak through a LATER horoscope request, and every horoscope request
+   * first runs `buildNatalAstrolabe`, whose own `finally` (src/core/chart.ts) wipes the
+   * table before `.horoscope()` is ever reached. So the horoscope path self-heals and
+   * masks the missing reset entirely.
+   *
+   * The natal path does not, because natal 四化 markers are stamped onto the stars at
+   * BUILD time — inside `astro.withOptions()`, i.e. BEFORE that same `finally` runs.
+   * A plain natal request supplies no `mutagens`, and iztro's `config()` is merge-only
+   * for that key (an omitted/undefined value silently no-ops instead of clearing), so
+   * the previous horoscope caller's override is still resident in iztro's module-level
+   * table and gets stamped into this caller's stars. Exactly the shape a long-lived
+   * stdio MCP server sees: one caller uses a school override on
+   * `calculate_ziwei_horoscope`, the next caller asks `calculate_ziwei` for a totally
+   * different birth and silently gets the first caller's 四化.
+   *
+   * Deliberately a DIFFERENT birth in the second request, so no shared-chart caching or
+   * coincidence can explain a pass, and deliberately asserted twice: the baseline must
+   * itself be uncontaminated (first assert) AND unchanged afterwards (second). The
+   * first assert is what stops "before == after == both corrupted" from passing if some
+   * earlier test in this file happened to leave the same sentinel resident.
+   */
+  it('CROSS-TOOL: an overridden horoscope request does not stamp its 四化 into a later plain NATAL chart for a different birth', () => {
+    const plainB = noTarget(B);
+    const baseline = N(plainB);
+    // The sentinel stars must not be 四化-marked by default for this birth, or the
+    // "unchanged" assert below could not tell a leak from the default answer.
+    for (const s of SENTINEL_1) expect(natalMarks(baseline).some(m => m.startsWith(s))).toBe(false);
+
+    H({ ...A, mutagens: allStems(SENTINEL_1) });
+
+    const after = N(plainB);
+    expect(natalMarks(after)).toEqual(natalMarks(baseline));
+    expect(after).toEqual(baseline);
+  });
+
+  it('CROSS-TOOL: the same holds for the scalar keys — an overridden horoscope request does not re-answer a later plain natal chart', () => {
+    // Same direction, non-mutagens half: `algorithm`/`astroType` are supplied fresh on
+    // every `astro.withOptions()` call so they cannot leak the merge-only way, but this
+    // pins the whole natal answer (not just 四化) across the boundary, which is the
+    // guarantee callers actually rely on.
+    const plainB = noTarget(B);
+    const baseline = N(plainB);
+    H({ ...A, algorithm: 'zhongzhou', astroType: 'earth', mutagens: allStems(SENTINEL_2), brightness: { 紫微: Array(12).fill('陷') } });
+    expect(N(plainB)).toEqual(baseline);
+  });
+
   it('a request that THROWS still leaves the config pristine for the next one', () => {
     // Deliberately triggered by the Axis-A range guard rather than by the pre-birth
     // guard, so this test keeps testing config restoration even if some other refusal
@@ -640,28 +714,31 @@ describe('运限 audit: defect 5 — degenerate targets', () => {
 });
 
 /**
- * KNOWN FAILING — implementation bug, left red deliberately (project rule: write the
- * failing test, do not fix src/).
+ * REGRESSION GUARD — was red when written, green since commit 6dcfa85.
  *
- * The pre-birth guard compares the target's lunar year against
- * `natal.lunarConv.lunarYear` (the TRUE birth lunar year), but 虚岁 is computed
- * against the ±1-shifted feed year. For a birth after 立春 and before 正月初一 —
- * the same window the ±1 shift exists for — those differ by one, so a target between
- * the birth instant and the following 正月初一 slips past the guard and lands in
- * exactly the garbage regime defect 5b exists to block:
+ * What this block pins: a 立春-window birth asked about a target inside its OWN true
+ * lunar year must never reach iztro's degenerate regime. It must either be rejected,
+ * or answered with 虚岁 >= 1 and real palace indexes/干支 — never
  *
  *     decadal.index = -1, age.index = -1, stem = 'jia', branch = 'zi', nominalAge = 0
  *
- * Reachable with no exotic input at all: it is what a person born 2024-02-09 gets by
- * asking for their 运限 on their own birthday (or on any of the next 5 days), i.e.
- * the tool's own no-target "now" default during that window.
+ * The original defect: the pre-birth guard compared the target's lunar year against
+ * `natal.lunarConv.lunarYear` (the TRUE birth lunar year) while 虚岁 was computed
+ * against the ±1-shifted feed year. For a birth after 立春 and before 正月初一 — the
+ * same window the ±1 shift exists for — those differ by one, so a target between the
+ * birth instant and the following 正月初一 slipped past the guard into the garbage
+ * regime defect 5b exists to block. Reachable with no exotic input: it is what a
+ * person born 2024-02-09 got by asking for their 运限 on their own birthday, i.e. the
+ * tool's own no-target "now" default during that window. src/core/horoscope.ts now
+ * floors the 虚岁 birth side (`birthEpochLunarYear` / `inBirthOwnPreLichunSpan`), and
+ * this block is what stops that floor from being refactored away.
  *
- * Fix shape: the guard should be expressed in terms of the 虚岁 base actually used
- * (`natal.feedYear - sixtyOffset`), or equivalently reject a computed nominalAge < 1,
- * instead of `natal.lunarConv.lunarYear`. Note it is NOT the ±60 path: it reproduces
- * with sixtyOffset 0 (birth 2024-02-05).
+ * Both branches are still covered on purpose — the assertions accept a rejection as
+ * well as a correct answer, because either is a legitimate way to keep the promise —
+ * and both days matter: it is NOT the ±60 path, it reproduced with sixtyOffset 0
+ * (birth 2024-02-05) as well as with a ±60 shift (birth 2024-02-09).
  */
-describe('运限 audit: KNOWN BUG — 立春-window birth with a target in its own lunar year yields 虚岁 0 and index -1', () => {
+describe('运限 audit: 立春-window birth with a target in its own lunar year never yields 虚岁 0 / index -1', () => {
   for (const [label, day] of [['with a ±60 shift (2024-02-09)', 9], ['without one (2024-02-05)', 5]] as const) {
     it(`rejects or correctly answers a same-lunar-year target for a window birth ${label}`, () => {
       const birth = { ...FRAME, solarDate: { year: 2024, month: 2, day }, clockTime: { hour: 10, minute: 0 }, gender: 'male' as const };
