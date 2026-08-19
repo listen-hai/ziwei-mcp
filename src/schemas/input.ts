@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import starZhCN from 'iztro/lib/i18n/locales/zh-CN/star';
 
 /**
  * Single source of truth for the solar/lunar year range, shared by the schema layer
@@ -67,20 +68,40 @@ export const ClockTimeSchema = z.object({
 }).strict();
 
 // Heavenly stems and brightness grades are small, stable, closed sets (unchanged for
-// centuries) — worth enumerating directly. Star names are not (~160 of them, see
-// node_modules/iztro/lib/i18n/locales/zh-CN/star.d.ts) — validating array *shape*
-// there (length, non-empty strings) catches the same typo class without hand-copying
-// (and risking drift against) iztro's own star table.
+// centuries) — worth enumerating directly.
 const HeavenlyStemEnum = z.enum(['甲', '乙', '丙', '丁', '戊', '己', '庚', '辛', '壬', '癸']);
 const BrightnessValueEnum = z.enum(['庙', '旺', '得', '利', '平', '不', '陷', '']);
 
+// F3 fix: star names WERE only shape-checked (non-empty, <=10 chars), not enumerated —
+// the original reasoning was that hand-copying iztro's ~160 star names here would drift
+// against the pinned iztro version. That premise was wrong: the pinned package ships its
+// own canonical zh-CN star table at runtime (node_modules/iztro/lib/i18n/locales/zh-CN/
+// star.js, 162 entries), so reading it at import time is drift-proof by construction —
+// it can never desync from the iztro version actually loaded. Enumerating against it also
+// closes F1's blast radius: iztro's astro.config() merges mutagens/brightness into
+// module-level globals that persist across requests (see chart.ts's withIztroConfigReset),
+// so a typo'd/garbage star name here previously wasn't just ignored for one request — kot()
+// (node_modules/iztro/lib/i18n/index.js) fails to resolve it, the raw garbage string gets
+// merged into the global table, and it silently degrades every LATER chart's 四化/brightness
+// too, forever, until restart. Same philosophy as assertLeapMonthExists (src/core/lunar.ts):
+// never silently accept something the caller didn't actually ask for.
+//
+// Using z.enum(...) here (rather than a .refine() membership check) is also what caps F2's
+// otherwise-unbounded `brightness` key count for free: a zod record keyed by a closed enum
+// can never hold more than the enum's own cardinality (162) of distinct keys, well inside
+// "the low hundreds" the review called generous — no separate max-keys check needed.
+// `mutagens` doesn't need this treatment for key *count* (already capped at 10 by
+// HeavenlyStemEnum) but its four star-name values get the same membership check.
+const STAR_NAMES = Object.values(starZhCN) as [string, ...string[]];
+const StarNameEnum = z.enum(STAR_NAMES);
+
 export const MutagensSchema = z.record(
   HeavenlyStemEnum,
-  z.array(z.string().min(1).max(10)).length(4, 'mutagens override for a stem must list exactly 4 star names, in [禄,权,科,忌] order.')
+  z.array(StarNameEnum).length(4, 'mutagens override for a stem must list exactly 4 real iztro star names (zh-CN), in [禄,权,科,忌] order.')
 ).optional();
 
 export const BrightnessSchema = z.record(
-  z.string().min(1).max(10),
+  StarNameEnum,
   z.array(BrightnessValueEnum).length(12, 'brightness override for a star must list exactly 12 entries, one per palace.')
 ).optional();
 
@@ -122,11 +143,9 @@ export const ZiweiInputSchema = z.object({
 
   // spec §9 / §12: mutagens and brightness are both listed as 透传 (passthrough) —
   // plumbing only, no per-school presets. iztro's own config accepts these keyed by
-  // Chinese star/stem names (matching the hardcoded language:'zh-CN'); we validate
-  // the shape (which keys/lengths iztro actually reads, see src/core/chart.ts and
-  // node_modules/iztro/lib/utils/index.js's getBrightness/getMutagen) rather than
-  // exhaustively enumerating iztro's ~160 star names, which would duplicate data
-  // that already lives in (and can drift with) the pinned iztro version.
+  // Chinese star/stem names (matching the hardcoded language:'zh-CN'); star names are
+  // enumerated against iztro's own shipped zh-CN star table (StarNameEnum above) rather
+  // than shape-only checks — see that comment for why this is drift-proof, not drift-prone.
   mutagens: MutagensSchema.describe('School/convention override for 四化 (Four Transformations): maps a heavenly stem (甲-癸) to its own [禄,权,科,忌] star names (exactly 4, in that order), overriding iztro\'s built-in table for that stem only. Optional passthrough to iztro\'s config.mutagens; omit for the default table.'),
   brightness: BrightnessSchema.describe('School/convention override for star brightness (庙旺得利平不陷): maps a star name to its own 12-entry brightness array (one per palace, iztro\'s internal 寅卯辰...丑 order), overriding iztro\'s built-in table for that star only. Optional passthrough to iztro\'s config.brightness; omit for the default table.'),
 }).strict().refine(

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'bun:test';
 import { calculateZiweiChart } from '../src/core/chart';
 import { ZiweiInputSchema, parseZiweiInput } from '../src/schemas/input';
+import starZhCN from 'iztro/lib/i18n/locales/zh-CN/star';
 import { ganZhiOfLunarYear, lunarYearForGanZhi } from '../src/core/lunar';
 import { resolveLocation, lookupCity } from '../src/geo/resolver';
 import type { ZiweiInput, ValidatedZiweiInput } from '../src/types';
@@ -582,11 +583,21 @@ describe('8.2 shichen input and its ambiguity reporting', () => {
  * Finding #7 / spec §9 / §12: `mutagens` and `brightness` are 透传 (passthrough)
  * school/convention overrides, plumbed straight through to iztro's own
  * `config.mutagens` / `config.brightness` with no per-school presets.
+ *
+ * Delta security review findings F1/F2/F3 (see src/core/chart.ts's
+ * resetIztroMutagensAndBrightness and src/schemas/input.ts's StarNameEnum):
+ * F1 - iztro merges these two keys into module-level globals that persist across
+ *      calls; a request carrying overrides must not affect any LATER request.
+ * F2 - `brightness`'s key count was unbounded (a 50k-key payload cost 17.2s of
+ *      CPU inside iztro's config() and blocked the single-threaded server).
+ * F3 - override star names were shape-checked but not enumerated, so a typo'd
+ *      name was silently accepted and (via F1) silently degraded every later
+ *      chart's 四化/brightness table too.
  */
 describe('spec §9 mutagens/brightness passthrough', () => {
   const base = { place: 'Beijing', solarDate: { year: 2000, month: 8, day: 16 }, clockTime: { hour: 4, minute: 0 }, gender: 'male' as const };
 
-  it('overrides a star\'s brightness at every palace it appears in', () => {
+  it('overrides a star\'s brightness at every palace it appears in, without leaking into a later plain request', () => {
     const plain = chart(base);
     const plainZiwei = plain.palaces.flatMap(p => p.majorStars).find(s => s.name === '紫微')!;
     expect(plainZiwei.brightness).toBe('庙'); // this birth's default, per iztro's built-in table
@@ -600,9 +611,15 @@ describe('spec §9 mutagens/brightness passthrough', () => {
     // Nothing else about the chart should move — only the requested star's brightness.
     expect(overridden.soulPalace).toEqual(plain.soulPalace);
     expect(overridden.palaces.map(p => p.majorStars.map(s => s.name))).toEqual(plain.palaces.map(p => p.majorStars.map(s => s.name)));
+
+    // F1: a THIRD, plain call after the override must reproduce the FIRST plain call
+    // exactly — this is what the old test structure could never catch, since it only
+    // ever computed "plain" once, before any override had run.
+    const plainAgain = chart(base);
+    expect(plainAgain).toEqual(plain);
   });
 
-  it('overrides which star carries a stem\'s mutagen', () => {
+  it('overrides which star carries a stem\'s mutagen, without leaking into a later plain request', () => {
     const plain = chart(base);
     const yearStem = plain.diagnostics.yearGanZhi[0];
     expect(plain.palaces.flatMap(p => [...p.majorStars, ...p.minorStars]).find(s => s.name === '太阴')?.mutagen).not.toBe('禄');
@@ -610,6 +627,27 @@ describe('spec §9 mutagens/brightness passthrough', () => {
     const overridden = chart({ ...base, mutagens: { [yearStem]: ['太阴', '太阴', '太阴', '太阴'] } });
     const taiyin = overridden.palaces.flatMap(p => [...p.majorStars, ...p.minorStars]).find(s => s.name === '太阴')!;
     expect(taiyin.mutagen).toBe('禄');
+
+    // F1: same as above, for mutagens.
+    const plainAgain = chart(base);
+    expect(plainAgain).toEqual(plain);
+  });
+
+  it('F1: overrides from one call never leak into ANY later call, plain or overridden differently', () => {
+    // This is the review's exact repro shape: plain, then an override call (garbage
+    // mutagens included, matching the report's repro), then the SAME plain chart
+    // again — first and third must be byte-identical. Before the fix, the garbage
+    // mutagens entry ('aaaa' etc.) would have failed schema validation (F3 closes
+    // that hole too), so this also exercises the brightness leak path with a
+    // schema-valid-but-nonstandard override, and a second unrelated override in
+    // between to prove state doesn't accumulate across multiple contaminating calls.
+    const plain1 = chart(base);
+
+    chart({ ...base, brightness: { '紫微': Array(12).fill('陷') as ('庙'|'旺'|'得'|'利'|'平'|'不'|'陷'|'')[] } });
+    chart({ ...base, mutagens: { '甲': ['太阴', '太阴', '太阴', '太阴'] } });
+
+    const plain2 = chart(base);
+    expect(plain2).toEqual(plain1);
   });
 
   it('rejects malformed override shapes', () => {
@@ -621,5 +659,52 @@ describe('spec §9 mutagens/brightness passthrough', () => {
     expect(ZiweiInputSchema.safeParse({ ...base, brightness: { '紫微': ['庙', '旺'] } }).success).toBe(false);
     // brightness: not a real brightness grade.
     expect(ZiweiInputSchema.safeParse({ ...base, brightness: { '紫微': Array(12).fill('X') } }).success).toBe(false);
+  });
+
+  it('F3: rejects star names that are not real iztro stars, instead of silently no-opping', () => {
+    // Exactly the review's repro: a typo'd/garbage star name in a mutagens override.
+    expect(ZiweiInputSchema.safeParse({ ...base, mutagens: { '甲': ['aaaa', 'bbbb', 'cccc', 'dddd'] } }).success).toBe(false);
+    // Same for brightness's key.
+    expect(ZiweiInputSchema.safeParse({ ...base, brightness: { '不是星': Array(12).fill('庙') } }).success).toBe(false);
+    // A single garbage entry among otherwise-real star names is still rejected.
+    expect(ZiweiInputSchema.safeParse({ ...base, mutagens: { '甲': ['廉贞', '破军', '武曲', 'not-a-star'] } }).success).toBe(false);
+  });
+
+  it('F2: caps brightness override key count at iztro\'s real star count and rejects an oversized payload fast', () => {
+    // The review's repro: a schema-valid-shaped but huge record (~50k keys) that
+    // used to cost 17.2s of CPU inside iztro's config(). Since brightness keys are
+    // now validated against the closed, ~162-entry star-name enum (see
+    // src/schemas/input.ts's StarNameEnum), an object with 50k distinct fake keys
+    // fails on the FIRST unrecognized key and never reaches iztro at all.
+    const huge: Record<string, string[]> = {};
+    for (let i = 0; i < 50_000; i++) huge[`fakeStar${i}`] = Array(12).fill('庙');
+
+    const start = performance.now();
+    const result = ZiweiInputSchema.safeParse({ ...base, brightness: huge });
+    const elapsedMs = performance.now() - start;
+
+    expect(result.success).toBe(false);
+    // Generous ceiling: was 17.2s pre-fix; a closed-enum key check should be
+    // milliseconds. 1s leaves headroom for slow CI without being a no-op check.
+    expect(elapsedMs).toBeLessThan(1000);
+  });
+
+  it('F2: a real star name can only appear once, so a valid brightness override can never exceed iztro\'s real star count', () => {
+    // A JS object literal can't hold duplicate keys, and every key must now be a
+    // member of the closed real-star enum — so the max number of distinct,
+    // schema-valid brightness keys is bounded by iztro's own star count (162),
+    // "the low hundreds" the review called generous, without any separate
+    // max-keys check to maintain.
+    const allStarNames = Object.values(starZhCN);
+    expect(allStarNames.length).toBeLessThan(300); // sanity: "low hundreds", not tens of thousands
+
+    const allValid: Record<string, string[]> = {};
+    for (const name of allStarNames) allValid[name] = Array(12).fill('庙');
+    expect(ZiweiInputSchema.safeParse({ ...base, brightness: allValid }).success).toBe(true);
+
+    // Adding one more distinct key that isn't a real star name still fails, proving
+    // the cap is enforced by membership, not merely by a count that could be
+    // bypassed with more real names than actually exist.
+    expect(ZiweiInputSchema.safeParse({ ...base, brightness: { ...allValid, 'nope': Array(12).fill('庙') } }).success).toBe(false);
   });
 });

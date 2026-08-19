@@ -16,6 +16,48 @@ import { lunar2solar, solar2lunar, ganZhiOfLunarYear, lunarYearForGanZhi, assert
 import { resolveLocation } from '../geo/resolver';
 import { trimChart } from './output';
 
+// F1 fix: iztro's astro.config() (node_modules/iztro/lib/astro/astro.js, ~L82-103)
+// merges the `mutagens`/`brightness` keys of every `config` object passed to
+// astro.withOptions() into two MODULE-LEVEL objects (`_mutagens`/`_brightness`) and
+// never clears them — unlike every other config key (yearDivide, dayDivide, etc.),
+// which is a scalar that gets fully re-supplied (defaulted from the same module
+// globals) on every call, so it can never carry state a caller didn't just provide.
+// mutagens/brightness are merge-only: a key omitted from `config.mutagens` on this
+// call still reads back whatever a PREVIOUS call last merged in. On a long-lived
+// stdio MCP server this means one caller's override permanently rewrites every
+// later chart this process ever produces (proved: see tests/boundary.test.ts's
+// "does not leak overrides into a later plain request" case).
+//
+// iztro exposes no "reset to defaults" call, but astro.getConfig() (same file,
+// exports.getConfig) returns `{ mutagens: _mutagens, brightness: _brightness, ... }`
+// where `.mutagens`/`.brightness` are the SAME object references iztro mutates
+// in-place (never reassigned to a new object — verified by reading astro.js: every
+// write is `_mutagens[key] = ...`, never `_mutagens = {...}`). That means a snapshot
+// taken via getConfig() the FIRST time this module is loaded (before any request has
+// ever run, and therefore before any override could have touched it) is a live
+// handle to iztro's actual internal state forever. We use that handle to wipe and
+// restore the two tables after every astro.withOptions() call, whether or not this
+// particular request passed overrides — restoring unconditionally is what stops a
+// PRIOR call's leftover state from leaking into a request that itself supplies no
+// override (config() only touches _mutagens/_brightness when a value is truthy, so
+// `mutagens: undefined` silently no-ops instead of clearing anything).
+//
+// Do not "simplify" this to only reset when input.mutagens/input.brightness are set,
+// and do not replace the delete-then-reassign with `cfg.mutagens = {...}` — that
+// would rebind the local variable, not iztro's internal `_mutagens`, and the leak
+// would come right back.
+const _iztroConfigSnapshot = astro.getConfig();
+const PRISTINE_MUTAGENS = { ..._iztroConfigSnapshot.mutagens };
+const PRISTINE_BRIGHTNESS = { ..._iztroConfigSnapshot.brightness };
+
+function resetIztroMutagensAndBrightness(): void {
+  const cfg = astro.getConfig();
+  for (const key of Object.keys(cfg.mutagens)) delete (cfg.mutagens as Record<string, unknown>)[key];
+  Object.assign(cfg.mutagens, PRISTINE_MUTAGENS);
+  for (const key of Object.keys(cfg.brightness)) delete (cfg.brightness as Record<string, unknown>)[key];
+  Object.assign(cfg.brightness, PRISTINE_BRIGHTNESS);
+}
+
 const pad = (n: number) => String(n).padStart(2, '0');
 const fmtDate = (w: { year: number; month: number; day: number }) => `${w.year}-${pad(w.month)}-${pad(w.day)}`;
 const fmtDateTime = (w: { year: number; month: number; day: number; hour: number; minute: number }) =>
@@ -272,14 +314,16 @@ export function calculateZiweiChart(input: ValidatedZiweiInput): ZiweiCalculatio
       ageDivide: opts.ageDivide,
       dayDivide: opts.dayDivide,
       algorithm: opts.algorithm,
-      // spec §9/§12 passthrough (finding #7): plumbing only, validated for shape by
-      // MutagensSchema/BrightnessSchema (src/schemas/input.ts), not re-validated here.
-      // Cast needed for mutagens only: zod's z.record(HeavenlyStemEnum, ...) infers
-      // star-name entries as plain `string[]`, while iztro's own ConfigMutagens types
-      // them as `StarName[]` (its own closed union of ~160 literal star names, which
-      // the schema deliberately does not re-enumerate — see MutagensSchema's comment).
-      // brightness needs no cast: BrightnessValueEnum's members are already literal
-      // subsets of iztro's Brightness union, so it's structurally compatible as-is.
+      // spec §9/§12 passthrough (finding #7): plumbing only, validated by
+      // MutagensSchema/BrightnessSchema (src/schemas/input.ts) — including, as of the
+      // F3 fix, membership against iztro's own runtime-loaded star-name table — not
+      // re-validated here. Cast needed for mutagens only: zod's z.record(...) infers
+      // star-name entries as plain `string[]` (a structural, not nominal, type), while
+      // iztro's own ConfigMutagens types them as `StarName[]` (its own closed union of
+      // ~160 literal star names) — the two types describe the same runtime values but
+      // aren't assignable to each other without a cast. brightness needs no cast:
+      // BrightnessValueEnum's members are already literal subsets of iztro's
+      // Brightness union, so it's structurally compatible as-is.
       mutagens: input.mutagens as ConfigMutagens | undefined,
       brightness: input.brightness,
     },
@@ -318,6 +362,12 @@ export function calculateZiweiChart(input: ValidatedZiweiInput): ZiweiCalculatio
     throw new Error(
       `iztro chart calculation failed for feed year ${feedYear}, lunar month ${lunarConv.lunarMonth} day ${lunarConv.lunarDay}: ${(err as Error).message}`
     );
+  } finally {
+    // F1 fix: always wipe iztro's module-level mutagens/brightness globals back to
+    // pristine after this call, success or throw — see resetIztroMutagensAndBrightness's
+    // definition above for why this must run unconditionally, not just when this
+    // request itself passed overrides.
+    resetIztroMutagensAndBrightness();
   }
 
   const trimmed = trimChart(chart);
