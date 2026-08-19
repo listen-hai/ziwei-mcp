@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/@lhk714/ziwei-mcp.svg)](https://www.npmjs.com/package/@lhk714/ziwei-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![CI](https://github.com/listen-hai/ziwei-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/listen-hai/ziwei-mcp/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-131%20passed%2C%200%20failed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-216%20passed%2C%200%20failed-brightgreen.svg)]()
 [![Bun](https://img.shields.io/badge/runtime-Bun%20%7C%20Node-black.svg)]()
 
 > Deterministic Zi Wei Dou Shu (紫微斗数排盘) Model Context Protocol (MCP) server: the `iztro` star-placement engine wrapped in a real astronomical time layer, with every school convention exposed as an explicit parameter.
@@ -111,7 +111,23 @@ Requires `gender`, one of `solarDate`/`lunarDate`, one of `clockTime`/`shichen`,
 
 **Output** — trimmed to keep an LLM's context usable: the 12 palaces with their stems, branches, major/minor/adjective stars, brightness, 四化 and 大限 range, plus 命宫/身宫, 命主/身主, 五行局, the lunar date, and a `diagnostics` block recording the exact instant, both axes, the longitude and equation-of-time corrections, the conventions applied, and any warnings.
 
-### 2. `lookup_location`
+### 2. `calculate_ziwei_horoscope`
+
+运限 — the moving chart: 大限 (decade), 小限 (minor year), 流年/流月/流日/流时 (year/month/day/hour), each with its own 四化 and 运曜. Takes the same birth contract as `calculate_ziwei`, plus a `target` (solar date + clock time, resolved through the same time layer — true solar, IANA, DST). Omit `target` for "now".
+
+It is a separate tool on purpose: folding six scopes × twelve palaces of 运曜 into the natal response would blow up an LLM's context for callers who only wanted the chart.
+
+iztro's 运限 *arithmetic* is sound — an independent implementation of the classical rules agrees with it across **303,582 assertions, zero mismatches**. Its *interface* needed wrapping, and this tool does it:
+
+- The year-ganzhi bypass that keeps the natal chart correct silently poisons every age-derived scope, because 虚岁 is `target lunar year − fed lunar year + 1`. Compensated per scope — 流月/流日/流时 always come from the true target, since 流日 is JDN-based and not 60-year periodic.
+- `horoscopeDivide` is locked: under iztro's `'exact'`, 流年 divides at 立春 while 虚岁/大限/小限 divide at 正月初一, so one response contradicts itself six days a year.
+- iztro's config is global and `horoscope()` reads it lazily, so one caller's school override would otherwise rewrite later callers' charts.
+- `ageDivide: 'birthday'` is **rejected** here: it flips on the 1st of the month *after* the birth month and ignores the birth day, so honouring it would silently mean something other than what it says.
+- Targets before the birth are rejected (iztro returned `index: -1` and untranslated i18n keys, silently), and a late-Zi target is normalized (`dayDivide` does not affect `horoscope()` at all).
+
+Age reckoning uses the 立春-designated birth year against a 正月初一 target axis. That asymmetry is a deliberate, documented convention choice, not an accident — the diagnostics report it, and the tests pin it.
+
+### 3. `lookup_location`
 
 Resolves an English city name to longitude, latitude and IANA timezone across 7,329 cities in 227 countries. Ambiguous names (e.g. "Los Angeles", which exists in both the US and Chile) are refused with the candidate list rather than guessed.
 
@@ -125,7 +141,7 @@ This server does not calculate Bazi. Use [`@lhk714/bazi-mcp`](https://github.com
 
 ## 🧪 Verification
 
-`bun test` — **131 tests**, including:
+`bun test` — **216 tests**, including:
 
 - An **independent implementation of the classical star-placement rules** (安星诀) from the source texts, checked against iztro across hundreds of seeded random charts and ~18,000 assertions. This is what pins the engine: an upstream change to any star's placement fails the suite.
 - 立春-boundary scans asserting the year ganzhi flips **exactly once, at the true instant** — the regression guard for Z1.

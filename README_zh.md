@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/@lhk714/ziwei-mcp.svg)](https://www.npmjs.com/package/@lhk714/ziwei-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![CI](https://github.com/listen-hai/ziwei-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/listen-hai/ziwei-mcp/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-131%20passed%2C%200%20failed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-216%20passed%2C%200%20failed-brightgreen.svg)]()
 [![Bun](https://img.shields.io/badge/runtime-Bun%20%7C%20Node-black.svg)]()
 
 > 确定性紫微斗数排盘 MCP 服务：以 `iztro` 为安星引擎，外面包一层真实的天文时间层，并把每一个流派选择显式暴露成参数。
@@ -110,7 +110,23 @@ npx -y @lhk714/ziwei-mcp
 
 **输出**做了裁剪，以免挤爆 LLM 上下文：十二宫的宫干支、主星/辅星/杂耀、亮度、四化与大限范围，加上命宫/身宫、命主/身主、五行局、农历日期，以及 `diagnostics` 诊断块 —— 记录精确瞬时、两根轴、经度修正与时差方程、实际生效的流派、以及全部 warning。
 
-### 2. `lookup_location`
+### 2. `calculate_ziwei_horoscope`
+
+运限 —— 动盘：大限、小限、流年/流月/流日/流时，各自带四化与运曜。出生参数与 `calculate_ziwei` 完全一致，另加 `target`（公历日期 + 时刻，走同一套时间层：真太阳时、IANA、夏令时）。不传 `target` 即为「当下」。
+
+**刻意做成独立工具**：把六个作用域 × 十二宫的运曜塞进本命盘响应，会把只想要一张盘的调用方的上下文直接挤爆。
+
+iztro 的运限**算术是对的** —— 独立实现的古籍规则与它对拍 **303,582 项断言、0 处不符**。需要包装的是它的**接口**：
+
+- 让本命盘年干支正确的那个绕过，会静默毒化所有按年龄推的作用域，因为虚岁 = `目标农历年 − 喂入农历年 + 1`。已按作用域分别补偿 —— 流月/流日/流时**永远取真实目标**，因为流日按儒略日推、不是 60 年周期。
+- `horoscopeDivide` 被锁死：iztro 的 `'exact'` 下，流年按立春分界而虚岁/大限/小限按正月初一分界，每年有六天一份响应自相矛盾。
+- iztro 的 config 是全局的且 `horoscope()` 延迟读取，否则一个调用方的流派覆盖会改写后来者的盘。
+- `ageDivide: 'birthday'` 在此**被拒绝**：它实际按「生月的下个月初一」翻转、完全忽略生日，照单全收等于让参数名说谎。
+- 出生前的目标被拒绝（iztro 会静默返回 `index: -1` 和未翻译的 i18n key），晚子时目标被归一化（`dayDivide` 对 `horoscope()` 完全无效）。
+
+年龄采用「立春定的生年」对「正月初一轴的目标年」这一**不对称**口径。这是有意的、有记录的约定选择而非疏漏 —— 诊断块会如实报告，测试也钉死了它。
+
+### 3. `lookup_location`
 
 把英文城市名解析为经纬度与 IANA 时区，覆盖 227 个国家 7,329 座城市。同名歧义（例如「Los Angeles」在美国和智利都有）会**列出候选并拒绝**，不猜。
 
@@ -124,7 +140,7 @@ npx -y @lhk714/ziwei-mcp
 
 ## 🧪 验证
 
-`bun test` —— **131 个测试**，其中包括：
+`bun test` —— **216 个测试**，其中包括：
 
 - 一套**独立实现的古籍安星诀**，与 iztro 对拍数百张种子随机盘、约 18,000 项断言。这是钉死引擎的东西：上游任何一颗星的安放变了，测试就会红。
 - 立春边界逐时辰扫描，断言年干支**必须且只能在真实立春时刻翻一次** —— Z1 的回归防线。
