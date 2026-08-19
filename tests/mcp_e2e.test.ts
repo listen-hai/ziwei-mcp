@@ -222,6 +222,72 @@ describe('MCP end-to-end over stdio (built binary)', () => {
     expect(after.result.tools.length).toBe(3);
   });
 
+  /**
+   * The horoscope tool's refusals only exist as refusals if they survive the transport:
+   * an uncaught throw inside the call handler would surface here as a dead session or a
+   * JSON-RPC error object instead of an `isError` tool result, and nowhere else.
+   */
+  it('surfaces every calculate_ziwei_horoscope refusal as a tool error over the wire, leaving the session usable', async () => {
+    const birth = {
+      timezone: 'Etc/GMT-8', longitude: 120, trueSolar: false,
+      solarDate: { year: 1990, month: 6, day: 15 }, clockTime: { hour: 10, minute: 0 }, gender: 'male',
+    };
+    const target = { solarDate: { year: 2025, month: 6, day: 15 }, clockTime: { hour: 13, minute: 0 } };
+    const cases: Array<[unknown, string]> = [
+      [{ ...birth, target: { solarDate: { year: 1980, month: 1, day: 1 }, clockTime: { hour: 12, minute: 0 } } }, 'before the birth lunar year'],
+      [{ ...birth, target, ageDivide: 'birthday' }, '以生日为界'],
+      [{ ...birth, target: { solarDate: { year: 2025, month: 6, day: 15 } } }, 'clockTime'],
+      [{ ...birth, target: { solarDate: { year: 2101, month: 1, day: 1 }, clockTime: { hour: 0, minute: 0 } } }, '1900 and 2100'],
+      [{ gender: 'male', target }, 'Must provide'],
+    ];
+    for (const [args, expected] of cases) {
+      const result = await session.callTool('calculate_ziwei_horoscope', args);
+      expect(result.isError).toBe(true);
+      const text = result.content[0].text;
+      expect(text).toContain('[Ziwei Calculation Error]');
+      expect(text).toContain(expected);
+      expect(text).not.toContain('"code"');
+      expect(text).not.toContain('"path"');
+    }
+
+    const after = await session.send('tools/list');
+    expect(after.result.tools.length).toBe(3);
+  });
+
+  it('computes a 运限 for the current instant when target is omitted, through the real transport', async () => {
+    const before = Date.now();
+    const result = await session.callTool('calculate_ziwei_horoscope', {
+      timezone: 'Etc/GMT-8', longitude: 120, trueSolar: false,
+      solarDate: { year: 1990, month: 6, day: 15 }, clockTime: { hour: 10, minute: 0 }, gender: 'male',
+    });
+    const after = Date.now();
+    expect(result.isError).toBeFalsy();
+    const horoscope = parseToolPayload(result);
+    const chosen = Date.parse(horoscope.diagnostics.targetUtcInstant);
+    expect(chosen).toBeGreaterThanOrEqual(before - 5000);
+    expect(chosen).toBeLessThanOrEqual(after + 5000);
+    // Same 虚岁 invariant as the in-process suite, stated without a wall-clock constant.
+    const c = horoscope.diagnostics.feedYearCompensation;
+    expect(horoscope.age.nominalAge).toBe(horoscope.diagnostics.targetLunar.year - (c.birthFeedYear - c.sixtyYearOffsetApplied) + 1);
+  });
+
+  it('serializes a ±60-compensated chart intact over the wire (the case that returned 虚岁 -24 unwrapped)', async () => {
+    const result = await session.callTool('calculate_ziwei_horoscope', {
+      timezone: 'Etc/GMT-8', longitude: 120, trueSolar: false,
+      solarDate: { year: 2024, month: 2, day: 9 }, clockTime: { hour: 10, minute: 0 }, gender: 'male',
+      target: { solarDate: { year: 2054, month: 6, day: 15 }, clockTime: { hour: 13, minute: 0 } },
+    });
+    expect(result.isError).toBeFalsy();
+    const h = parseToolPayload(result);
+    expect(h.diagnostics.feedYearCompensation.birthFeedYear).toBe(1964);
+    expect(h.diagnostics.feedYearCompensation.sixtyYearOffsetApplied).toBe(-60);
+    expect(h.age.nominalAge).toBe(31);
+    expect(h.decadal.index).toBeGreaterThanOrEqual(0);
+    // No untranslated i18n key survived anywhere in the payload.
+    expect(JSON.stringify(h)).not.toMatch(/"(jia|yi|bing|ding|wu|ji|geng|xin|ren|gui|zi|chou|yin|mao|chen|si|wei|shen|you|xu|hai)"/);
+    expect(JSON.stringify(h)).not.toContain('"index": -1');
+  });
+
   it('keeps stdout free of anything but JSON-RPC', async () => {
     // MCP over stdio multiplexes nothing: a stray console.log from our code or any
     // dependency corrupts the stream and breaks every client silently.

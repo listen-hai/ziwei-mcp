@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'bun:test';
 import { z } from 'zod';
 import { createZiweiMcpServer, formatZodError } from '../src/mcp/server';
+import { ZiweiHoroscopeInputSchema } from '../src/schemas/horoscope';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
 const listHandler = () => {
@@ -188,6 +189,93 @@ describe('MCP error paths', () => {
     const res = await call('non_existent_tool', {});
     expect(res.isError).toBe(true);
     expect(res.content[0].text).toContain('Unknown MCP tool');
+  });
+});
+
+/**
+ * calculate_ziwei_horoscope at the MCP boundary. The tool's own arithmetic and wrapper
+ * behaviour live in tests/horoscope-wrapper.test.ts; what is only observable here is
+ * that the advertised schema matches the zod one, that the six scopes survive JSON
+ * serialization intact, and that each of the wrapper's refusals reaches the caller as a
+ * readable tool error rather than a crash or raw validation JSON.
+ */
+describe('MCP calculate_ziwei_horoscope', () => {
+  const birth = {
+    timezone: 'Etc/GMT-8', longitude: 120, trueSolar: false,
+    solarDate: { year: 1990, month: 6, day: 15 }, clockTime: { hour: 10, minute: 0 }, gender: 'male',
+  };
+  const target = { solarDate: { year: 2025, month: 6, day: 15 }, clockTime: { hour: 13, minute: 0 } };
+
+  it('advertises exactly the fields the zod schema accepts, derived from the schema rather than restated', async () => {
+    // The advertised JSON Schema and ZiweiHoroscopeInputSchema are authored separately
+    // (src/mcp/server.ts vs src/schemas/horoscope.ts); since the zod object is
+    // `.strict()`, an advertised-but-unaccepted field is a caller-visible lie and an
+    // accepted-but-unadvertised one is invisible. Read the zod shape through its
+    // `.refine()` wrappers so this can never drift the way a hand-copied list does.
+    let node: any = ZiweiHoroscopeInputSchema;
+    while (node?._def?.schema) node = node._def.schema;
+    const zodFields = Object.keys(node.shape).sort();
+
+    const res = await listHandler()({ method: 'tools/list' }, {});
+    const tool = res.tools.find((t: any) => t.name === 'calculate_ziwei_horoscope')!;
+    expect(Object.keys(tool.inputSchema.properties).sort()).toEqual(zodFields);
+    expect(tool.inputSchema.additionalProperties).toBe(false);
+    expect(tool.inputSchema.required).toEqual(['gender']);
+    expect(Object.keys(tool.inputSchema.properties.target.properties).sort()).toEqual(['clockTime', 'dstFold', 'solarDate']);
+    expect(tool.inputSchema.properties.target.required).toEqual(['solarDate', 'clockTime']);
+    expect(tool.inputSchema.properties.target.properties.dstFold.enum).toEqual([0, 1]);
+    // The description must send callers to the natal tool for the chart itself, since
+    // this response deliberately omits it.
+    expect(tool.description).toContain('calculate_ziwei');
+  });
+
+  it('returns the six scopes and diagnostics, and no natal chart', async () => {
+    const res = await call('calculate_ziwei_horoscope', { ...birth, target });
+    expect(res.isError).toBeFalsy();
+    const payload = JSON.parse(res.content[0].text);
+    expect(Object.keys(payload).sort()).toEqual(['age', 'daily', 'decadal', 'diagnostics', 'hourly', 'monthly', 'yearly']);
+    expect(payload.age.nominalAge).toBe(36);
+    expect(payload.yearly.stem + payload.yearly.branch).toBe('乙巳');
+    expect(payload.diagnostics.convention.horoscopeDivide).toBe('lichun');
+    expect(payload.diagnostics.engineInfo.iztro).toBe('2.6.0');
+  });
+
+  it('defaults to "now" when target is omitted, rather than erroring', async () => {
+    const before = Date.now();
+    const res = await call('calculate_ziwei_horoscope', birth);
+    const after = Date.now();
+    expect(res.isError).toBeFalsy();
+    const payload = JSON.parse(res.content[0].text);
+    const chosen = Date.parse(payload.diagnostics.targetUtcInstant);
+    expect(chosen).toBeGreaterThanOrEqual(before - 1000);
+    expect(chosen).toBeLessThanOrEqual(after + 1000);
+  });
+
+  it('reports each wrapper refusal as a readable tool error, not raw validation JSON', async () => {
+    const cases: Array<[string, unknown, string]> = [
+      ['pre-birth target', { ...birth, target: { solarDate: { year: 1980, month: 1, day: 1 }, clockTime: { hour: 12, minute: 0 } } }, 'before the birth lunar year'],
+      ['ageDivide birthday', { ...birth, target, ageDivide: 'birthday' }, '以生日为界'],
+      ['partial target', { ...birth, target: { solarDate: { year: 2025, month: 6, day: 15 } } }, 'clockTime'],
+      ['unknown target key', { ...birth, target: { ...target, timezone: 'UTC' } }, 'Unrecognized key'],
+      ['out-of-range target year', { ...birth, target: { solarDate: { year: 2101, month: 1, day: 1 }, clockTime: { hour: 0, minute: 0 } } }, '1900 and 2100'],
+      ['timeUnknown', { ...birth, target, timeUnknown: true }, 'timeUnknown is not supported'],
+    ];
+    for (const [label, args, expected] of cases) {
+      const res = await call('calculate_ziwei_horoscope', args);
+      expect(`${label}: ${res.isError}`).toBe(`${label}: true`);
+      const text = res.content[0].text;
+      expect(`${label}: ${text}`).toContain(expected);
+      expect(text).toContain('[Ziwei Calculation Error]');
+      expect(text).not.toContain('"code"');
+      expect(text).not.toContain('"path"');
+    }
+  });
+
+  it('keeps a bad star-name override small and actionable here too, not a 162-name dump', async () => {
+    const res = await call('calculate_ziwei_horoscope', { ...birth, target, mutagens: { 甲: ['紫薇', '破军', '武曲', '太阳'] } });
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toContain('did you mean "紫微"');
+    expect(res.content[0].text.length).toBeLessThan(1000);
   });
 });
 
