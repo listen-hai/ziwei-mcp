@@ -670,6 +670,54 @@ describe('spec §9 mutagens/brightness passthrough', () => {
     expect(ZiweiInputSchema.safeParse({ ...base, mutagens: { '甲': ['廉贞', '破军', '武曲', 'not-a-star'] } }).success).toBe(false);
   });
 
+  it('F3 papercut: a bad star name gets a short, targeted message instead of zod\'s 162-name enum dump', () => {
+    // Zod's default invalid_enum_value message inlines every option in the enum, once
+    // per failing entry. With 162 star names that message alone runs to ~1.2KB, and a
+    // 4-entry mutagens override (4 issues) used to balloon to ~4.7KB total — a bad
+    // trade for an LLM caller that just needs to self-correct a typo. StarNameEnum's
+    // custom errorMap (src/schemas/input.ts) must keep every such message short and
+    // must name the value that was actually rejected.
+    const typoResult = ZiweiInputSchema.safeParse({
+      ...base,
+      mutagens: { '甲': ['aaaa', 'bbbb', 'cccc', 'dddd'] },
+    });
+    expect(typoResult.success).toBe(false);
+    if (!typoResult.success) {
+      for (const issue of typoResult.error.issues) {
+        expect(issue.message.length).toBeLessThan(200);
+        expect(issue.message).not.toContain('紫微'); // no leaked full enum list
+      }
+      const totalChars = typoResult.error.issues.map(i => i.message).join('; ').length;
+      expect(totalChars).toBeLessThan(400); // was ~4,686 before the fix
+    }
+
+    // A long garbage value (not just a short typo) must not blow the message back up —
+    // the received value itself is echoed, so it needs its own cap independent of the
+    // enum-list suppression above.
+    const longGarbage = 'x'.repeat(10_000);
+    const longGarbageResult = ZiweiInputSchema.safeParse({
+      ...base,
+      mutagens: { '甲': [longGarbage, '破军', '武曲', '太阳'] },
+    });
+    expect(longGarbageResult.success).toBe(false);
+    if (!longGarbageResult.success) {
+      expect(longGarbageResult.error.issues[0].message.length).toBeLessThan(200);
+    }
+
+    // Near-miss (zh-TW/typo variant) gets a "did you mean" pointing at the real name.
+    const nearMissResult = ZiweiInputSchema.safeParse({
+      ...base,
+      brightness: { '紫薇': Array(12).fill('庙') }, // 薇 vs the real 微
+    });
+    expect(nearMissResult.success).toBe(false);
+    if (!nearMissResult.success) {
+      const message = nearMissResult.error.issues[0].message;
+      expect(message.length).toBeLessThan(200);
+      expect(message).toContain('紫薇'); // names the offending value
+      expect(message).toContain('紫微'); // suggests the real star name
+    }
+  });
+
   it('F2: caps brightness override key count at iztro\'s real star count and rejects an oversized payload fast', () => {
     // The review's repro: a schema-valid-shaped but huge record (~50k keys) that
     // used to cost 17.2s of CPU inside iztro's config(). Since brightness keys are

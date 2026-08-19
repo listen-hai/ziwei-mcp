@@ -93,7 +93,67 @@ const BrightnessValueEnum = z.enum(['庙', '旺', '得', '利', '平', '不', '�
 // `mutagens` doesn't need this treatment for key *count* (already capped at 10 by
 // HeavenlyStemEnum) but its four star-name values get the same membership check.
 const STAR_NAMES = Object.values(starZhCN) as [string, ...string[]];
-const StarNameEnum = z.enum(STAR_NAMES);
+
+// Zod's default invalid_enum_value message inlines all 162 star names, once per
+// failing entry (measured: ~1.2KB per bad value, so a 4-entry mutagens override
+// balloons to ~4.7KB). That error goes straight to an LLM caller for self-correction —
+// dumping the full list four times over risks truncation for a one-word typo. A cheap
+// nearest-match (Levenshtein over 162 short strings) gives a targeted "did you mean"
+// instead, which is more actionable than the list anyway (the realistic failure is a
+// typo like 紫薇 for 紫微, or a zh-TW variant).
+function levenshtein(a: string, b: string): number {
+  const dp = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    let prev = dp[0];
+    dp[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const tmp = dp[j];
+      dp[j] = a[i - 1] === b[j - 1] ? prev : 1 + Math.min(prev, dp[j], dp[j - 1]);
+      prev = tmp;
+    }
+  }
+  return dp[b.length];
+}
+
+// A 50k-key garbage payload (F2's stress test) runs every key through here, so this
+// must stay cheap even when nothing is close: skip the O(n*m) Levenshtein DP entirely
+// for names whose length alone already rules out beating the current best (distance
+// is always >= the length difference) — real star names are 1-4 chars, so a garbage
+// key like "fakeStar12345" is pruned by a single integer comparison per name.
+const MAX_SUGGESTION_DISTANCE = 2;
+function closestStarName(received: string): string | undefined {
+  let best: string | undefined;
+  let bestDist = MAX_SUGGESTION_DISTANCE + 1;
+  for (const name of STAR_NAMES) {
+    if (Math.abs(received.length - name.length) >= bestDist) continue;
+    const d = levenshtein(received, name);
+    if (d < bestDist) {
+      bestDist = d;
+      best = name;
+    }
+  }
+  return bestDist > 0 && bestDist <= MAX_SUGGESTION_DISTANCE ? best : undefined;
+}
+
+const StarNameEnum = z.enum(STAR_NAMES, {
+  errorMap: (issue, ctx) => {
+    if (issue.code === z.ZodIssueCode.invalid_enum_value) {
+      // Cap the echoed value too — a caller who typos a star name is one thing, but
+      // nothing stops a bogus payload from putting a huge garbage string here instead
+      // of a typo. Real star names are <=4 chars, so 20 is generous headroom while
+      // still keeping the message itself out of the "enormous" territory this fix
+      // exists to close.
+      const raw = String(ctx.data);
+      const received = raw.length > 20 ? `${raw.slice(0, 20)}…` : raw;
+      const suggestion = closestStarName(received);
+      return {
+        message: `"${received}" is not a recognized star name (zh-CN)`
+          + (suggestion ? ` — did you mean "${suggestion}"?` : '.'),
+      };
+    }
+    return { message: ctx.defaultError };
+  },
+});
 
 export const MutagensSchema = z.record(
   HeavenlyStemEnum,
