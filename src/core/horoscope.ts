@@ -293,8 +293,49 @@ export function calculateZiweiHoroscope(input: ValidatedZiweiHoroscopeInput): Zi
   // at most birthTrueYear+1, so this branch can only trigger when baseOffset is
   // exactly +1 and targetTrueYear == birthTrueYear).
   const birthEpochLunarYear = natal.feedYear - sixtyOffset;
+
+  // ── Mirror of the floor above, for the OTHER window direction. A birth AFTER 正月
+  // 初一 but BEFORE 立春 (baseOffset -1: feedYear = birthTrueYear - 1, i.e.
+  // birthEpochLunarYear < natal.lunarConv.lunarYear) never trips the floor above —
+  // targetLunarConv.lunarYear is always >= natal.lunarConv.lunarYear (pre-birth guard)
+  // which is already > birthEpochLunarYear here, so the raw subtraction is >= 2 from
+  // the instant of birth onward, never <1. But 2 is wrong for a target that hasn't
+  // itself turned an age-year by EITHER boundary the lichun school recognizes yet:
+  // it's still within the birth's own TRUE 正月初一-to-正月初一 span (zero 正月初一
+  // crossings since birth) AND it hasn't reached the 立春 instant that closes out the
+  // birth's own (feedYear-designated) ganzhi year. A newborn queried on their own
+  // birthday is 虚岁 1, not 2 — same law the floor enforces for the +1-window birth,
+  // just arithmetically valid-looking here instead of <1, so nothing catches it
+  // without this explicit check.
+  //
+  // Two clauses, both required:
+  //  - targetLunarConv.lunarYear === natal.lunarConv.lunarYear scopes this to the
+  //    birth's own true lunar year only. Without it, ganzhi recurrence (every 60
+  //    years) would make yearlyGanZhiLichun === natal.yearGanZhi true again ~60 years
+  //    later and wrongly re-fire this branch on an adult.
+  //  - yearlyGanZhiLichun === natal.yearGanZhi (yearlyGanZhiLichun already computed
+  //    above, unconditionally from the true target instant, never horoscopeDivide-
+  //    gated — see the `Atarget` block) is the 立春 check: true exactly until the
+  //    target's own instant crosses the 立春 that closes the birth's ganzhi year.
+  //    natal.yearGanZhi IS that ganzhi whenever this branch can even be reached
+  //    (only yearDivide:'lichun' births ever produce a nonzero baseOffset at all —
+  //    yearDivide:'lunar_new_year' always yields feedYear === birthTrueYear, so
+  //    birthEpochLunarYear === natal.lunarConv.lunarYear and this condition is
+  //    unreachable for those births).
+  //
+  // The instant EITHER clause goes false, the raw feedYear-anchored formula is
+  // already correct and needs no further help: it reads exactly 2 the moment 立春 is
+  // crossed (still same true lunar year), and exactly 3 at the target's own next 正月
+  // 初一 — a clean +1 step each time, never a skip, and unchanged for every far target
+  // (defect-1b's pinned "one HIGHER than naive" semantics, e.g. 虚岁 32 for a 2053
+  // target, survive untouched since this branch cannot reach that far).
+  const inBirthOwnPreLichunSpan =
+    birthEpochLunarYear < natal.lunarConv.lunarYear &&
+    targetLunarConv.lunarYear === natal.lunarConv.lunarYear &&
+    yearlyGanZhiLichun === natal.yearGanZhi;
+
   const decadalAgeAnchorLunarYear =
-    targetLunarConv.lunarYear < birthEpochLunarYear
+    targetLunarConv.lunarYear < birthEpochLunarYear || inBirthOwnPreLichunSpan
       ? natal.feedYear
       : sixtyOffset !== 0
         ? targetLunarConv.lunarYear + sixtyOffset

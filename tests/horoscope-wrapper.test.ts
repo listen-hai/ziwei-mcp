@@ -286,6 +286,85 @@ describe('运限 audit: the ±1 立春-window feed shift is NOT compensated (and
 });
 
 // ════════════════════════════════════════════════════════════════════════════════
+// Defect 1c — the -1-window birth's OWN first age-year (mirror of the floor above)
+// ════════════════════════════════════════════════════════════════════════════════
+describe('运限 audit: defect 1c — a -1-window birth is 虚岁 1 on its own birthday, not 2', () => {
+  // 2023: 正月初一 = Jan 22, 立春 = Feb 4. Birth Jan 25 is the SAME birth as the
+  // "one HIGHER" test above (feedYear 2022, true lunar year 2023, offset -1). That
+  // test only pins a FAR target (2053 -> 32); nothing in it constrains a target still
+  // inside the birth's own first true lunar year. The floor added for the +1-window
+  // birth doesn't fire here — targetLunarConv.lunarYear is never below feedYear for
+  // this birth (2023 >= 2022 from the instant of birth onward), it's the mirror
+  // ceiling in src/core/horoscope.ts (`inBirthOwnPreLichunSpan`) that must fire
+  // instead. Walking hour-by-hour across the whole first year, exactly like the +1
+  // window's own "walks the whole window" test below pins its transition.
+  const birth = { ...FRAME, solarDate: { year: 2023, month: 1, day: 25 }, clockTime: { hour: 10, minute: 0 }, gender: 'male' as const };
+  const at = (y: number, m: number, d: number, h: number, horoscopeDivide?: 'lichun' | 'lunar_new_year') =>
+    H({ ...birth, ...(horoscopeDivide ? { horoscopeDivide } : {}), target: { solarDate: { year: y, month: m, day: d }, clockTime: { hour: h, minute: 0 } } });
+
+  it('confirms the fixture: feedYear 2022, true lunar year 2023, offset -1, no ±60 involved', () => {
+    const natal = N(birth);
+    expect(natal.lunar.year).toBe(2023);
+    expect(natal.diagnostics.yearGanZhi).toBe('壬寅');
+    expect(natal.diagnostics.feedYear).toBe(2022);
+  });
+
+  it('is 虚岁 1, in 童限 (not 大限), on its own birthday', () => {
+    const res = at(2023, 1, 25, 10);
+    expect(res.age.nominalAge).toBe(1);
+    expect(res.decadal.name).toBe('童限');
+    expect(res.age.index).toBeGreaterThanOrEqual(0);
+  });
+
+  it('is still 虚岁 1 for a same-lunar-year target BEFORE the birth date (mirrors defect 5\'s "whole birth lunar year" rule)', () => {
+    // 正月初一 2023 was Jan 22 -- Jan 23 is same true lunar year as the Jan 25 birth,
+    // but earlier in the calendar, and still pre-立春.
+    expect(at(2023, 1, 23, 12).age.nominalAge).toBe(1);
+  });
+
+  it('stays 虚岁 1 through the day BEFORE 立春, and turns to 2 at the true 立春 INSTANT -- not the calendar day', () => {
+    // yearlyGanZhi (Axis A, computed independently of any hard-coded lichun table)
+    // flips 壬寅 -> 癸卯 between 10:00 and 11:00 on 2023-02-04 for this exact chart.
+    expect(at(2023, 2, 3, 12).diagnostics.yearlyGanZhi).toBe('壬寅');
+    expect(at(2023, 2, 3, 12).age.nominalAge).toBe(1);
+    expect(at(2023, 2, 4, 10).diagnostics.yearlyGanZhi).toBe('壬寅');
+    expect(at(2023, 2, 4, 10).age.nominalAge).toBe(1);
+    expect(at(2023, 2, 4, 11).diagnostics.yearlyGanZhi).toBe('癸卯');
+    expect(at(2023, 2, 4, 11).age.nominalAge).toBe(2);
+  });
+
+  it('stays 虚岁 2 for the rest of the true lunar year 2023, including the eve of 正月初一 2024', () => {
+    expect(at(2023, 6, 1, 12).age.nominalAge).toBe(2);
+    const eve = at(2024, 2, 9, 12);
+    expect(eve.diagnostics.targetLunar.year).toBe(2023); // 正月初一 2024 is Feb 10
+    expect(eve.age.nominalAge).toBe(2);
+  });
+
+  it('turns to 虚岁 3 exactly at 正月初一 2024 -- a clean +1 step, never a skip', () => {
+    const res = at(2024, 2, 10, 12);
+    expect(res.diagnostics.targetLunar.year).toBe(2024);
+    expect(res.age.nominalAge).toBe(3);
+  });
+
+  it('a far target still reads 虚岁 32 (defect 1b\'s pinned "one HIGHER than naive" semantics survive untouched)', () => {
+    expect(at(2053, 6, 15, 13).age.nominalAge).toBe(2053 - 2022 + 1);
+  });
+
+  it('age/decadal for an in-window target of THIS birth stay byte-identical across horoscopeDivide (no test-331-style violation introduced)', () => {
+    const lichun = at(2023, 2, 4, 10, 'lichun');
+    const newYear = at(2023, 2, 4, 10, 'lunar_new_year');
+    expect(lichun.age).toEqual(newYear.age);
+    expect(lichun.decadal).toEqual(newYear.decadal);
+    expect(lichun.age.nominalAge).toBe(1);
+  });
+
+  // None of the 29 SIXTY_SHIFT_BIRTHS (the only 1900-2100 births needing the ±60
+  // crash-avoidance compensation) is a -1-window birth -- all 29 are +1 (verified by
+  // computing feedYear - true lunar year for each and stripping the ±60 component).
+  // There is no combined ±60 x -1-window case in range to cover here.
+});
+
+// ════════════════════════════════════════════════════════════════════════════════
 // Defect 2 — horoscopeDivide locked to 'normal' + the 立春↔正月初一 window
 // ════════════════════════════════════════════════════════════════════════════════
 describe('运限 audit: defect 2 — the 立春↔正月初一 window, and which year anchors 流月', () => {
