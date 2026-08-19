@@ -11,7 +11,7 @@ import { ZIWEI_DEFAULTS } from '../schemas/input';
 import { wallToInstant, instantToWall, toUTCWall, tzOffsetMinutes, getStandardOffsetMinutes, formatOffsetString } from './time';
 import { getShichenMidpoint, getShichenSamplePoints } from './shichen';
 import { toTimeIndex, trueSolarTimeIndex, shichenCandidateTimeIndexes, timeIndexToShichen } from './time-index';
-import { lunar2solar, solar2lunar, ganZhiOfLunarYear, lunarYearForGanZhi } from './lunar';
+import { lunar2solar, solar2lunar, ganZhiOfLunarYear, lunarYearForGanZhi, assertLeapMonthExists } from './lunar';
 import { resolveLocation } from '../geo/resolver';
 import { trimChart } from './output';
 
@@ -88,6 +88,13 @@ export function calculateZiweiChart(input: ValidatedZiweiInput): ZiweiCalculatio
   const lunarFrame: 'local' | 'beijing' = input.lunarDate ? opts.lunarDateFrame : 'local';
 
   if (input.lunarDate) {
+    // Defect A: lunar-lite's lunar2solar silently ignores isLeapMonth when the named
+    // leap month doesn't exist (e.g. lunar2solar('2021-4-15', true) === (...,false)),
+    // so without this check the service would silently chart the wrong (non-leap)
+    // date. Validate first and throw a clear error instead.
+    if (input.lunarDate.isLeapMonth) {
+      assertLeapMonthExists(input.lunarDate.year, input.lunarDate.month);
+    }
     let conv;
     try {
       conv = lunar2solar(`${input.lunarDate.year}-${input.lunarDate.month}-${input.lunarDate.day}`, Boolean(input.lunarDate.isLeapMonth));
@@ -225,25 +232,50 @@ export function calculateZiweiChart(input: ValidatedZiweiInput): ZiweiCalculatio
 
   const feedYear = lunarYearForGanZhi(yearGanZhi, lunarConv.lunarYear, lunarConv.lunarMonth, lunarConv.lunarDay, lunarConv.isLeap);
 
+  const commonOptions = {
+    timeIndex,
+    gender: input.gender,
+    fixLeap: opts.fixLeap,
+    language: 'zh-CN' as const,
+    astroType: opts.astroType,
+    config: {
+      yearDivide: 'normal' as const,
+      horoscopeDivide: 'normal' as const,
+      ageDivide: opts.ageDivide,
+      dayDivide: opts.dayDivide,
+      algorithm: opts.algorithm,
+    },
+  };
+
   let chart: FunctionalAstrolabe;
   try {
-    chart = astro.withOptions<FunctionalAstrolabe>({
-      type: 'lunar',
-      dateStr: `${feedYear}-${lunarConv.lunarMonth}-${lunarConv.lunarDay}`,
-      timeIndex,
-      gender: input.gender,
-      isLeapMonth: lunarConv.isLeap,
-      fixLeap: opts.fixLeap,
-      language: 'zh-CN',
-      astroType: opts.astroType,
-      config: {
-        yearDivide: 'normal',
-        horoscopeDivide: 'normal',
-        ageDivide: opts.ageDivide,
-        dayDivide: opts.dayDivide,
-        algorithm: opts.algorithm,
-      },
-    });
+    // Defect B: iztro's `type:'lunar'` entry point validates the day count against
+    // the NON-leap twin month even when isLeapMonth:true is passed, so it throws
+    // "only 29 days in lunar year Y month M" for any of the 17 real 闰月三十 days
+    // between 1900-2100 (e.g. 2017 闰六月三十) — even though that's a real calendar
+    // day and lunar-lite reports it fine. `type:'solar'` builds the same days
+    // correctly (verified: 300 random charts, 1930-2019, byte-identical to the
+    // `type:'lunar'` path after stripping the polluted calendar fields — including
+    // re-checked for dayDivide:'forward' + timeIndex:12, the Z2 late-Zi case).
+    // So whenever no feed-year shift is needed (the overwhelming majority of
+    // births), feed the Axis-B local true solar date via `type:'solar'` instead —
+    // this fixes the leap-30 crash and changes nothing else. When a shift IS
+    // needed (feedYear !== lunarConv.lunarYear), probe-findings P2c found zero
+    // leap 正月/腊月 in 1800-2100, so that path never needs to express a leap
+    // month and can safely keep using `type:'lunar'` with the computed feedYear.
+    chart =
+      feedYear === lunarConv.lunarYear
+        ? astro.withOptions<FunctionalAstrolabe>({
+            ...commonOptions,
+            type: 'solar',
+            dateStr: fmtDate(trueSolarWall),
+          })
+        : astro.withOptions<FunctionalAstrolabe>({
+            ...commonOptions,
+            type: 'lunar',
+            dateStr: `${feedYear}-${lunarConv.lunarMonth}-${lunarConv.lunarDay}`,
+            isLeapMonth: lunarConv.isLeap,
+          });
   } catch (err) {
     throw new Error(
       `iztro chart calculation failed for feed year ${feedYear}, lunar month ${lunarConv.lunarMonth} day ${lunarConv.lunarDay}: ${(err as Error).message}`
