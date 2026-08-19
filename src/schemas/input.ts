@@ -173,7 +173,19 @@ export const BrightnessSchema = z.record(
 const PLACE_MAX = 200;
 const TIMEZONE_MAX = 100;
 
-export const ZiweiInputSchema = z.object({
+/**
+ * The base object shape shared by the natal tool (calculate_ziwei) and the horoscope
+ * tool (calculate_ziwei_horoscope) — spec's "same birth-input contract" requirement
+ * for the horoscope tool. Kept as its own exported ZodObject (rather than only living
+ * inline inside ZiweiInputSchema below) specifically so the horoscope schema
+ * (src/schemas/horoscope.ts) can `.extend()` it with a `target` field instead of
+ * hand-copying all of these properties — a zod ZodEffects (the result of chaining
+ * `.refine()`) has no `.extend()`, so the refinements below are applied via
+ * `withBirthInputRefinements` (also exported) rather than baked into this object,
+ * letting both schemas share the exact same object shape AND the exact same
+ * cross-field validation messages with zero duplication.
+ */
+export const ZiweiInputObjectSchema = z.object({
   // Birth location (identical contract to bazi-mcp)
   place: z.string().max(PLACE_MAX, `place must be ${PLACE_MAX} characters or fewer.`).optional().describe('Birth city name in English, e.g. "Beijing", "New York", "Tacoma, WA"'),
   longitude: z.number().min(-180).max(180).optional().describe('Birth location longitude (positive = East, negative = West), e.g. 116.4074 or -122.4443'),
@@ -193,8 +205,8 @@ export const ZiweiInputSchema = z.object({
 
   // Zi Wei Dou Shu school/convention switches
   yearDivide: z.enum(['lichun', 'lunar_new_year']).optional().default(ZIWEI_DEFAULTS.yearDivide).describe('Year-ganzhi boundary: lichun (default, 立春 — determined on the true UTC instant, matching bazi-mcp) or lunar_new_year (正月初一)'),
-  horoscopeDivide: z.enum(['lichun', 'lunar_new_year']).optional().default(ZIWEI_DEFAULTS.horoscopeDivide).describe('Same boundary convention as yearDivide, but for horoscope (运限) year rollover. Currently has no effect on any output field: this version does not expose a horoscope()/运限 tool (see project spec §12), so nothing consumes it yet. Accepted now for forward compatibility.'),
-  ageDivide: z.enum(['normal', 'birthday']).optional().default(ZIWEI_DEFAULTS.ageDivide).describe('Small-limit (小限) boundary: normal (natural year) or birthday'),
+  horoscopeDivide: z.enum(['lichun', 'lunar_new_year']).optional().default(ZIWEI_DEFAULTS.horoscopeDivide).describe('Same boundary convention as yearDivide, but for horoscope (运限) year rollover — the calculate_ziwei_horoscope tool determines the 流年 boundary using this convention (see that tool\'s own docs).'),
+  ageDivide: z.enum(['normal', 'birthday']).optional().default(ZIWEI_DEFAULTS.ageDivide).describe('Small-limit (小限) boundary: normal (natural year) or birthday. Note: calculate_ziwei_horoscope rejects "birthday" outright (it is the only tool where 小限 is actually surfaced, and iztro\'s "birthday" mode is documented as 以生日为界 but actually flips on the 1st of the lunar month AFTER the birth month, ignoring the birth day entirely — see that tool\'s own docs). This natal tool still accepts it since 小限 has no effect on any natal-chart output field.'),
   dayDivide: z.enum(['current', 'forward']).optional().default(ZIWEI_DEFAULTS.dayDivide).describe('Late-Zi-hour (晚子时, 23:00-24:00) convention: current (default, counts as the same day) or forward (counts as the next day)'),
   algorithm: z.enum(['default', 'zhongzhou']).optional().default(ZIWEI_DEFAULTS.algorithm).describe('Star-placement algorithm: default (通行版) or zhongzhou (中州派, unverified against an independent source — see project spec §12)'),
   astroType: z.enum(['heaven', 'earth', 'human']).optional().default(ZIWEI_DEFAULTS.astroType).describe('Zhongzhou-school chart type (天盘/地盘/人盘); only meaningful with algorithm: "zhongzhou"'),
@@ -208,22 +220,44 @@ export const ZiweiInputSchema = z.object({
   // than shape-only checks — see that comment for why this is drift-proof, not drift-prone.
   mutagens: MutagensSchema.describe('School/convention override for 四化 (Four Transformations): maps a heavenly stem (甲-癸) to its own [禄,权,科,忌] star names (exactly 4, in that order), overriding iztro\'s built-in table for that stem only. Optional passthrough to iztro\'s config.mutagens; omit for the default table.'),
   brightness: BrightnessSchema.describe('School/convention override for star brightness (庙旺得利平不陷): maps a star name to its own 12-entry brightness array (one per palace, iztro\'s internal 寅卯辰...丑 order), overriding iztro\'s built-in table for that star only. Optional passthrough to iztro\'s config.brightness; omit for the default table.'),
-}).strict().refine(
-  data => data.solarDate || data.lunarDate,
-  { message: 'Must provide either solarDate or lunarDate.' }
-).refine(
-  data => !(data.solarDate && data.lunarDate),
-  { message: 'Cannot provide both solarDate and lunarDate; please provide only one.' }
-).refine(
-  data => data.clockTime || data.shichen,
-  { message: 'Must provide one of clockTime or shichen. Note: this tool does not support an "unknown birth time" mode — the soul palace, body palace, and several star placements (Wenchang/Wenqu, Huoxing/Lingxing, Dikong/Dijie) all depend on the birth hour, so there is no meaningful partial Zi Wei Dou Shu chart. If the exact time is unknown, provide your best estimate as `shichen` and check the returned `shichenAmbiguity` diagnostics.' }
-).refine(
-  data => !(data.clockTime && data.shichen),
-  { message: 'Cannot provide both clockTime and shichen; please provide only one.' }
-).refine(
-  data => data.place || (data.longitude !== undefined && data.timezone),
-  { message: 'Must provide place, or both longitude and timezone.' }
-);
+}).strict();
+
+/**
+ * The cross-field validation shared by ZiweiInputSchema and ZiweiHoroscopeInputSchema.
+ * A plain function (not baked into ZiweiInputObjectSchema) because zod's `.refine()`
+ * return type (ZodEffects) has no `.extend()` — see ZiweiInputObjectSchema's comment.
+ */
+// Loosely-typed field access (`as BirthInputFields`) inside the predicates below is
+// deliberate: constraining T's generic bound to a structural interface here (instead
+// of the unconstrained z.ZodTypeAny) previously made TypeScript infer T AS that
+// narrow constraint instead of the caller's actual (much wider) schema type — every
+// property outside the five checked here silently vanished from the inferred output
+// type. z.ZodTypeAny keeps T exactly what the caller passed in; the cast only affects
+// the five fields these particular checks read.
+interface BirthInputFields {
+  solarDate?: unknown; lunarDate?: unknown; clockTime?: unknown; shichen?: unknown;
+  place?: unknown; longitude?: unknown; timezone?: unknown;
+}
+export function withBirthInputRefinements<T extends z.ZodTypeAny>(schema: T) {
+  return schema.refine(
+    data => (data as BirthInputFields).solarDate || (data as BirthInputFields).lunarDate,
+    { message: 'Must provide either solarDate or lunarDate.' }
+  ).refine(
+    data => !((data as BirthInputFields).solarDate && (data as BirthInputFields).lunarDate),
+    { message: 'Cannot provide both solarDate and lunarDate; please provide only one.' }
+  ).refine(
+    data => (data as BirthInputFields).clockTime || (data as BirthInputFields).shichen,
+    { message: 'Must provide one of clockTime or shichen. Note: this tool does not support an "unknown birth time" mode — the soul palace, body palace, and several star placements (Wenchang/Wenqu, Huoxing/Lingxing, Dikong/Dijie) all depend on the birth hour, so there is no meaningful partial Zi Wei Dou Shu chart. If the exact time is unknown, provide your best estimate as `shichen` and check the returned `shichenAmbiguity` diagnostics.' }
+  ).refine(
+    data => !((data as BirthInputFields).clockTime && (data as BirthInputFields).shichen),
+    { message: 'Cannot provide both clockTime and shichen; please provide only one.' }
+  ).refine(
+    data => (data as BirthInputFields).place || ((data as BirthInputFields).longitude !== undefined && (data as BirthInputFields).timezone),
+    { message: 'Must provide place, or both longitude and timezone.' }
+  );
+}
+
+export const ZiweiInputSchema = withBirthInputRefinements(ZiweiInputObjectSchema);
 
 export const LookupLocationSchema = z.object({
   query: z.string().min(1, 'Search query cannot be empty').max(PLACE_MAX, `query must be ${PLACE_MAX} characters or fewer.`).describe('City name in English, e.g. "Tokyo", "London", "San Francisco"'),

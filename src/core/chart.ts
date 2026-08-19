@@ -1,6 +1,6 @@
 import { astro } from 'iztro';
 import type FunctionalAstrolabe from 'iztro/lib/astro/FunctionalAstrolabe';
-import type { ConfigMutagens } from 'iztro/lib/data/types';
+import type { ConfigMutagens, Config as IztroConfig } from 'iztro/lib/data/types';
 import { calculateBaziChart } from '@openfate/bazi-engine';
 import iztroPkg from 'iztro/package.json';
 import lunarLitePkg from 'lunar-lite/package.json';
@@ -13,7 +13,7 @@ import { wallToInstant, instantToWall, toUTCWall, tzOffsetMinutes, getStandardOf
 import { getShichenMidpoint, getShichenSamplePoints } from './shichen';
 import { toTimeIndex, trueSolarTimeIndex, shichenCandidateTimeIndexes, timeIndexToShichen } from './time-index';
 import { lunar2solar, solar2lunar, ganZhiOfLunarYear, lunarYearForGanZhi, assertLeapMonthExists } from './lunar';
-import { resolveLocation } from '../geo/resolver';
+import { resolveLocation, ResolvedLocation } from '../geo/resolver';
 import { trimChart } from './output';
 
 // F1 fix: iztro's astro.config() (node_modules/iztro/lib/astro/astro.js, ~L82-103)
@@ -46,16 +46,45 @@ import { trimChart } from './output';
 // and do not replace the delete-then-reassign with `cfg.mutagens = {...}` — that
 // would rebind the local variable, not iztro's internal `_mutagens`, and the leak
 // would come right back.
+//
+// horoscope() fix (§ project spec, "运限" feature): FunctionalAstrolabe.horoscope()
+// (node_modules/iztro/lib/astro/FunctionalAstrolabe.js) reads `astro.getConfig()`
+// LAZILY, at call time — not once at chart-build time — for horoscopeDivide/
+// ageDivide (and indirectly mutagens/brightness, for 运限 四化/brightness). Because
+// this reset already runs in `calculateZiweiChart`'s `finally` block immediately
+// after the natal chart is built, any LATER `chart.horoscope(...)` call (the horoscope
+// tool, src/core/horoscope.ts) would see PRISTINE mutagens/brightness instead of this
+// request's own overrides unless something re-applies the full config immediately
+// before each such call. `resetIztroConfig` (below) is that shared primitive — it also
+// resets the five scalar keys (yearDivide/horoscopeDivide/ageDivide/dayDivide/
+// algorithm) to their pristine module-load values, so a caller of this function never
+// has to know or guess what iztro's internal defaults are.
 const _iztroConfigSnapshot = astro.getConfig();
 const PRISTINE_MUTAGENS = { ..._iztroConfigSnapshot.mutagens };
 const PRISTINE_BRIGHTNESS = { ..._iztroConfigSnapshot.brightness };
+const PRISTINE_SCALARS: Pick<IztroConfig, 'yearDivide' | 'horoscopeDivide' | 'ageDivide' | 'dayDivide' | 'algorithm'> = {
+  yearDivide: _iztroConfigSnapshot.yearDivide,
+  horoscopeDivide: _iztroConfigSnapshot.horoscopeDivide,
+  ageDivide: _iztroConfigSnapshot.ageDivide,
+  dayDivide: _iztroConfigSnapshot.dayDivide,
+  algorithm: _iztroConfigSnapshot.algorithm,
+};
 
-function resetIztroMutagensAndBrightness(): void {
+/** Wipes iztro's module-level mutagens/brightness tables back to pristine and resets
+ * the five scalar config keys to their pristine module-load values. See the F1/horoscope
+ * comment above for why this must be unconditional (not gated on "did this request pass
+ * overrides") and why scalars need resetting too even though no natal-chart path has
+ * ever been observed to leak them (defense in depth for `chart.horoscope()`, which reads
+ * them lazily at call time — src/core/horoscope.ts calls this both before and after each
+ * `.horoscope()` invocation, never just after).
+ */
+export function resetIztroConfig(): void {
   const cfg = astro.getConfig();
   for (const key of Object.keys(cfg.mutagens)) delete (cfg.mutagens as Record<string, unknown>)[key];
   Object.assign(cfg.mutagens, PRISTINE_MUTAGENS);
   for (const key of Object.keys(cfg.brightness)) delete (cfg.brightness as Record<string, unknown>)[key];
   Object.assign(cfg.brightness, PRISTINE_BRIGHTNESS);
+  astro.config(PRISTINE_SCALARS);
 }
 
 const pad = (n: number) => String(n).padStart(2, '0');
@@ -63,13 +92,76 @@ const fmtDate = (w: { year: number; month: number; day: number }) => `${w.year}-
 const fmtDateTime = (w: { year: number; month: number; day: number; hour: number; minute: number }) =>
   `${fmtDate(w)} ${pad(w.hour)}:${pad(w.minute)}`;
 
-/**
- * The core orchestrator: birth location + date/time input -> resolved UTC
- * instant -> Axis A (year ganzhi) + Axis B (local true solar time, lunar
- * date, timeIndex) -> iztro (with yearDivide bypass, spec §5 Z1) -> trimmed
- * chart + diagnostics.
+export { fmtDate, fmtDateTime, pad };
+
+/** Every field of `calculateZiweiChart`'s resolved options that the horoscope tool
+ * (src/core/horoscope.ts) also needs — single source of truth via ZIWEI_DEFAULTS,
+ * see the comment on that constant.
  */
-export function calculateZiweiChart(input: ValidatedZiweiInput): ZiweiCalculationResult {
+export interface ResolvedZiweiOptions {
+  lunarDateFrame: 'local' | 'beijing';
+  yearDivide: 'lichun' | 'lunar_new_year';
+  horoscopeDivide: 'lichun' | 'lunar_new_year';
+  ageDivide: 'normal' | 'birthday';
+  dayDivide: 'current' | 'forward';
+  algorithm: 'default' | 'zhongzhou';
+  astroType: 'heaven' | 'earth' | 'human';
+  fixLeap: boolean;
+  trueSolar: boolean;
+}
+
+/**
+ * Everything the natal-chart build produces, in un-trimmed form. `calculateZiweiChart`
+ * (below) is just `trimChart(build.chart)` plus a diagnostics block built from these
+ * fields. `calculateZiweiHoroscope` (src/core/horoscope.ts) is the second, and reason
+ * this is its own exported function rather than being inlined in `calculateZiweiChart`:
+ * it reuses this ENTIRE natal build (location/time resolution, Axis A/B, the Z1
+ * feedYear bypass, the chart object itself) rather than duplicating any of it — the
+ * horoscope tool's target resolution starts from `loc`/`opts`/`commonOptions` here,
+ * and its defect-1 fix (spec item 1) needs `feedYear` and `lunarConv.lunarYear` exactly
+ * as computed here.
+ */
+export interface NatalBuild {
+  chart: FunctionalAstrolabe;
+  /** The exact options object passed to `astro.withOptions()` to build `chart` — reused
+   * verbatim by the horoscope tool as the argument to `astro.config()` before each of
+   * its own `chart.horoscope()` calls (see resetIztroConfig's comment above). */
+  commonOptions: {
+    timeIndex: number;
+    gender: 'male' | 'female';
+    fixLeap: boolean;
+    language: 'zh-CN';
+    astroType: 'heaven' | 'earth' | 'human';
+    config: IztroConfig;
+  };
+  feedYear: number;
+  lunarConv: ReturnType<typeof solar2lunar>;
+  opts: ResolvedZiweiOptions;
+  loc: ResolvedLocation;
+  instant: number;
+  localWall: WallDateTime;
+  offsetMinutes: number;
+  isDst: boolean;
+  timeIndex: number;
+  trueSolarWall: { year: number; month: number; day: number; hour: number; minute: number };
+  longitudeCorrectionMinutes: number;
+  equationOfTimeMinutes: number;
+  beijingWallForA: WallDateTime;
+  yearGanZhi: string;
+  lunarFrame: 'local' | 'beijing';
+  shichenAmbiguity?: ZiweiDiagnostics['shichenAmbiguity'];
+  warnings: string[];
+}
+
+/**
+ * The core orchestrator: birth location + date/time input -> resolved UTC instant ->
+ * Axis A (year ganzhi) + Axis B (local true solar time, lunar date, timeIndex) -> iztro
+ * (with the yearDivide bypass, spec §5 Z1) -> a built `FunctionalAstrolabe` plus every
+ * intermediate value needed to either trim it into a natal chart response
+ * (`calculateZiweiChart` below) or feed it into `calculateZiweiHoroscope`
+ * (src/core/horoscope.ts).
+ */
+export function buildNatalAstrolabe(input: ValidatedZiweiInput): NatalBuild {
   const warnings: string[] = [];
 
   // ZiweiInputSchema's `.default(...)` only fires when input goes through
@@ -79,7 +171,7 @@ export function calculateZiweiChart(input: ValidatedZiweiInput): ZiweiCalculatio
   // silently disabling True Solar Time). Resolve every defaulted field once, here,
   // against the same ZIWEI_DEFAULTS the schema itself uses, and read only `opts`
   // below this point.
-  const opts = {
+  const opts: ResolvedZiweiOptions = {
     lunarDateFrame: input.lunarDateFrame ?? ZIWEI_DEFAULTS.lunarDateFrame,
     yearDivide: input.yearDivide ?? ZIWEI_DEFAULTS.yearDivide,
     horoscopeDivide: input.horoscopeDivide ?? ZIWEI_DEFAULTS.horoscopeDivide,
@@ -363,12 +455,47 @@ export function calculateZiweiChart(input: ValidatedZiweiInput): ZiweiCalculatio
       `iztro chart calculation failed for feed year ${feedYear}, lunar month ${lunarConv.lunarMonth} day ${lunarConv.lunarDay}: ${(err as Error).message}`
     );
   } finally {
-    // F1 fix: always wipe iztro's module-level mutagens/brightness globals back to
-    // pristine after this call, success or throw — see resetIztroMutagensAndBrightness's
-    // definition above for why this must run unconditionally, not just when this
-    // request itself passed overrides.
-    resetIztroMutagensAndBrightness();
+    // F1 fix: always wipe iztro's module-level mutagens/brightness/scalar globals back
+    // to pristine after this call, success or throw — see resetIztroConfig's definition
+    // above for why this must run unconditionally, not just when this request itself
+    // passed overrides. Harmless to the `chart` object already built above (all of its
+    // natal computation already happened synchronously inside withOptions()); this only
+    // protects whatever iztro call runs next in this process, whether that's another
+    // natal chart or `chart.horoscope(...)` (src/core/horoscope.ts), which re-applies
+    // its own copy of `commonOptions.config` immediately before it needs it.
+    resetIztroConfig();
   }
+
+  return {
+    chart,
+    commonOptions,
+    feedYear,
+    lunarConv,
+    opts,
+    loc,
+    instant,
+    localWall,
+    offsetMinutes,
+    isDst,
+    timeIndex,
+    trueSolarWall,
+    longitudeCorrectionMinutes: solarIdx.longitudeCorrectionMinutes,
+    equationOfTimeMinutes: solarIdx.equationOfTimeMinutes,
+    beijingWallForA,
+    yearGanZhi,
+    lunarFrame,
+    shichenAmbiguity,
+    warnings,
+  };
+}
+
+/**
+ * Public natal-chart entry point: builds the astrolabe (`buildNatalAstrolabe`), trims
+ * it to the spec §7 shape, and assembles the diagnostics block.
+ */
+export function calculateZiweiChart(input: ValidatedZiweiInput): ZiweiCalculationResult {
+  const build = buildNatalAstrolabe(input);
+  const { chart, feedYear, lunarConv, opts, loc, instant, localWall, offsetMinutes, isDst, timeIndex, trueSolarWall, yearGanZhi, shichenAmbiguity, warnings } = build;
 
   const trimmed = trimChart(chart);
   const beijingWallOfInstant = instantToWall(instant, 'Asia/Shanghai');
@@ -377,16 +504,16 @@ export function calculateZiweiChart(input: ValidatedZiweiInput): ZiweiCalculatio
     wallClock: `${fmtDateTime(localWall)} (${loc.timezone})`,
     utcOffset: formatOffsetString(offsetMinutes, isDst),
     utcInstant: new Date(instant).toISOString(),
-    axisA_instant_forYearPillar: `${fmtDateTime(beijingWallForA)} (UTC+8)`,
+    axisA_instant_forYearPillar: `${fmtDateTime(build.beijingWallForA)} (UTC+8)`,
     axisB_localTrueSolarTime: fmtDateTime(trueSolarWall),
-    longitudeCorrectionMinutes: Number(solarIdx.longitudeCorrectionMinutes.toFixed(2)),
-    equationOfTimeMinutes: Number(solarIdx.equationOfTimeMinutes.toFixed(2)),
+    longitudeCorrectionMinutes: Number(build.longitudeCorrectionMinutes.toFixed(2)),
+    equationOfTimeMinutes: Number(build.equationOfTimeMinutes.toFixed(2)),
     yearGanZhi,
     yearDivideApplied: opts.yearDivide,
     yearDivideNote: `The year ganzhi was determined by this service on the true 立春 (start of spring) instant (Axis A: @openfate/bazi-engine on the Beijing wall clock of the resolved UTC instant), NOT by iztro's own yearDivide:'exact' (which only divides by calendar date, not the exact 立春 moment — see project spec §5 "Z1"). Lunar year ${feedYear} was then fed to iztro purely because it reproduces the correct ganzhi "${yearGanZhi}" under config.yearDivide:'normal'; it is not necessarily the birth year's own lunar year number (that is reported separately in \`lunar.year\`).`,
     feedYear,
     lunar: {
-      frame: lunarFrame,
+      frame: build.lunarFrame,
       solarDate: fmtDate(localWall),
       beijingSameDay: fmtDate(beijingWallOfInstant),
     },

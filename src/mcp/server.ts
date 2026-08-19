@@ -7,7 +7,9 @@ import {
   Tool,
 } from '@modelcontextprotocol/sdk/types.js';
 import { parseZiweiInput, LookupLocationSchema } from '../schemas/input';
+import { parseZiweiHoroscopeInput } from '../schemas/horoscope';
 import { calculateZiweiChart } from '../core/chart';
+import { calculateZiweiHoroscope } from '../core/horoscope';
 import { lookupCity } from '../geo/resolver';
 import rootPkg from '../../package.json';
 
@@ -55,14 +57,13 @@ export function createZiweiMcpServer(): Server {
     }
   );
 
-  const tools: Tool[] = [
-    {
-      name: 'calculate_ziwei',
-      description:
-        'Precise Zi Wei Dou Shu (紫微斗数) chart calculation tool. Uses iztro as the star-placement engine, wrapped with True Solar Time, full IANA/DST handling, and an independently-determined year ganzhi (bypassing a known bug in iztro\'s own yearDivide:\'exact\' — see the engineInfo/yearDivideNote in the response). Supports any birth location worldwide. IMPORTANT: The `place` field requires an ENGLISH city name; translate from other languages first (e.g. 北京 → "Beijing", 東京 → "Tokyo"). Pass exactly ONE of `solarDate`/`lunarDate` and ONE of `clockTime`/`shichen`. There is no "unknown birth time" mode — the soul palace, body palace, and several star placements all depend on the birth hour, so a request without a usable time is rejected rather than returning a partial chart. If `shichen` is used instead of an exact `clockTime`, check `diagnostics.shichenAmbiguity` in the response — because a shichen is a ~2-hour window and True Solar Time correction is typically tens of minutes, most shichen inputs land near enough to a boundary that the soul palace and several star placements could plausibly belong to the neighboring double-hour instead; the chart returned uses the shichen midpoint. `mutagens`/`brightness` are optional school/convention overrides passed through verbatim to iztro (see their own descriptions below); omit both to use iztro\'s built-in tables. Four Pillars / Bazi are out of scope — call bazi-mcp for those (its time layer is shared with this tool, so results align).',
-      inputSchema: {
-        type: 'object',
-        properties: {
+  // Shared by both calculate_ziwei and calculate_ziwei_horoscope — spec: the horoscope
+  // tool "takes the same birth-input contract as calculate_ziwei plus a target". A
+  // single source object (rather than hand-copying ~30 lines into a second tool
+  // definition) is what keeps the two tools' advertised schemas from drifting apart —
+  // exactly the discipline tests/mcp.test.ts's "advertised schema must not drift from
+  // the zod schema" check already enforces for calculate_ziwei alone.
+  const birthInputProperties: Record<string, object> = {
           place: {
             type: 'string',
             description: 'Birth city name in ENGLISH (e.g. "Beijing", "New York", "Lagos", "Tacoma, WA"). Translate from other languages before passing.',
@@ -138,13 +139,13 @@ export function createZiweiMcpServer(): Server {
             type: 'string',
             enum: ['lichun', 'lunar_new_year'],
             default: 'lichun',
-            description: 'Same convention as yearDivide, for horoscope (运限) year rollover. Currently has no effect: this version does not expose a horoscope()/运限 tool. Accepted for forward compatibility.',
+            description: 'Same convention as yearDivide, for horoscope (运限) year rollover. Used by the calculate_ziwei_horoscope tool to determine 流年; has no effect on this tool\'s own output.',
           },
           ageDivide: {
             type: 'string',
             enum: ['normal', 'birthday'],
             default: 'normal',
-            description: 'Small-limit (小限) boundary: normal (natural year) or birthday',
+            description: 'Small-limit (小限) boundary: normal (natural year) or birthday. Note: calculate_ziwei_horoscope rejects "birthday" outright (see that tool\'s own docs) — 小限 has no effect on this tool\'s own output, so the option is inert here.',
           },
           dayDivide: {
             type: 'string',
@@ -183,6 +184,62 @@ export function createZiweiMcpServer(): Server {
             description: 'School/convention override for star brightness (庙旺得利平不陷): maps a star name to its own 12-entry brightness array (one per palace, iztro\'s internal 寅卯辰...丑 order), overriding iztro\'s built-in table for that star only. Optional passthrough to iztro\'s config.brightness; omit for the default table.',
             additionalProperties: { type: 'array', items: { type: 'string' }, minItems: 12, maxItems: 12 },
           },
+  };
+
+  const tools: Tool[] = [
+    {
+      name: 'calculate_ziwei',
+      description:
+        'Precise Zi Wei Dou Shu (紫微斗数) chart calculation tool. Uses iztro as the star-placement engine, wrapped with True Solar Time, full IANA/DST handling, and an independently-determined year ganzhi (bypassing a known bug in iztro\'s own yearDivide:\'exact\' — see the engineInfo/yearDivideNote in the response). Supports any birth location worldwide. IMPORTANT: The `place` field requires an ENGLISH city name; translate from other languages first (e.g. 北京 → "Beijing", 東京 → "Tokyo"). Pass exactly ONE of `solarDate`/`lunarDate` and ONE of `clockTime`/`shichen`. There is no "unknown birth time" mode — the soul palace, body palace, and several star placements all depend on the birth hour, so a request without a usable time is rejected rather than returning a partial chart. If `shichen` is used instead of an exact `clockTime`, check `diagnostics.shichenAmbiguity` in the response — because a shichen is a ~2-hour window and True Solar Time correction is typically tens of minutes, most shichen inputs land near enough to a boundary that the soul palace and several star placements could plausibly belong to the neighboring double-hour instead; the chart returned uses the shichen midpoint. `mutagens`/`brightness` are optional school/convention overrides passed through verbatim to iztro (see their own descriptions below); omit both to use iztro\'s built-in tables. Four Pillars / Bazi are out of scope — call bazi-mcp for those (its time layer is shared with this tool, so results align). This tool returns ONLY the natal chart; for 大限/小限/流年/流月/流日/流时 (运限), call calculate_ziwei_horoscope instead — folding both into one response would blow up context for no benefit to most callers.',
+      inputSchema: {
+        type: 'object',
+        properties: { ...birthInputProperties },
+        required: ['gender'],
+        additionalProperties: false,
+      },
+    },
+    {
+      name: 'calculate_ziwei_horoscope',
+      description:
+        'Zi Wei Dou Shu (紫微斗数) horoscope (运限) calculation tool: 大限/童限 (decadal/childhood limit), 小限 (age limit), 流年 (yearly), 流月 (monthly), 流日 (daily), and 流时 (hourly) — their palace, ganzhi, rotated palace names, own 四化, and 运曜 (dynamic stars) by palace. Returns ONLY these six scopes, NOT the natal chart (call calculate_ziwei separately for that — a Zi Wei chart is already an order of magnitude bigger than a Bazi one, and folding six scopes worth of 运曜 on top would blow up context). Takes the exact same birth-input contract as calculate_ziwei (place/date/time/gender/school conventions — see that tool\'s own field docs) plus an optional `target`: the instant to compute the horoscope for. Omit `target` entirely to default to the current instant ("now"); if provided, both `target.solarDate` and `target.clockTime` are required together (a date-only target is ambiguous for 流时, which needs an exact hour). Wraps several interface defects in iztro\'s own horoscope() (documented in `diagnostics`, not reimplemented arithmetic): a target before the birth date is rejected (iztro returns nonsensical values instead); `ageDivide:\'birthday\'` is rejected outright (iztro\'s implementation of it does not actually divide by the birth day, despite its name — see the ageDivide field\'s own description); the 流年 boundary is independently determined by this service (see `diagnostics.yearlyGanZhi`/`yearlyGanZhiNote`) rather than iztro\'s own self-contradictory exact-boundary mode; and 虚岁/大限/小限 are compensated for an internal iztro workaround (`diagnostics.feedYearCompensation`) that would otherwise silently corrupt them for some birth dates. Check `diagnostics.warnings` for anything that needs the caller\'s attention (e.g. a target that falls in the narrow 立春↔正月初一 window, where 流年 and 流月\'s own internal year anchor briefly disagree).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          ...birthInputProperties,
+          target: {
+            type: 'object',
+            description: 'The instant to compute 运限 for. Omit entirely to default to "now". If provided, both solarDate and clockTime are required (no partial target).',
+            additionalProperties: false,
+            properties: {
+              solarDate: {
+                type: 'object',
+                description: 'Solar (Gregorian) target date',
+                additionalProperties: false,
+                properties: {
+                  year: { type: 'integer', description: 'Solar year (1900-2100)' },
+                  month: { type: 'integer', description: 'Month (1-12)' },
+                  day: { type: 'integer', description: 'Day (1-31)' },
+                },
+                required: ['year', 'month', 'day'],
+              },
+              clockTime: {
+                type: 'object',
+                description: 'Clock time of the target instant',
+                additionalProperties: false,
+                properties: {
+                  hour: { type: 'integer', description: 'Hour (0-23)' },
+                  minute: { type: 'integer', description: 'Minute (0-59)' },
+                },
+                required: ['hour', 'minute'],
+              },
+              dstFold: {
+                type: 'integer',
+                enum: [0, 1],
+                description: 'DST fall-back disambiguation for the target instant: 0 = first occurrence (DST), 1 = second occurrence (Standard)',
+              },
+            },
+            required: ['solarDate', 'clockTime'],
+          },
         },
         required: ['gender'],
         additionalProperties: false,
@@ -216,6 +273,20 @@ export function createZiweiMcpServer(): Server {
       if (name === 'calculate_ziwei') {
         const validatedInput = parseZiweiInput(args);
         const result = calculateZiweiChart(validatedInput);
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(result, null, 2),
+            },
+          ],
+        };
+      }
+
+      if (name === 'calculate_ziwei_horoscope') {
+        const validatedInput = parseZiweiHoroscopeInput(args);
+        const result = calculateZiweiHoroscope(validatedInput);
 
         return {
           content: [

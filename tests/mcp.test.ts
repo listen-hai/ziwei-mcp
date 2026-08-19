@@ -17,9 +17,9 @@ const call = (name: string, args: unknown) =>
   callHandler()({ method: 'tools/call', params: { name, arguments: args } }, {});
 
 describe('MCP tools/list', () => {
-  it('lists both tools with object input schemas', async () => {
+  it('lists all tools with object input schemas', async () => {
     const res = await listHandler()({ method: 'tools/list' }, {});
-    expect(res.tools.map((t: any) => t.name).sort()).toEqual(['calculate_ziwei', 'lookup_location']);
+    expect(res.tools.map((t: any) => t.name).sort()).toEqual(['calculate_ziwei', 'calculate_ziwei_horoscope', 'lookup_location']);
     for (const tool of res.tools) {
       expect(tool.inputSchema.type).toBe('object');
       expect(typeof tool.description).toBe('string');
@@ -39,6 +39,20 @@ describe('MCP tools/list', () => {
       'gender', 'horoscopeDivide', 'longitude', 'lunarDate', 'lunarDateFrame', 'mutagens', 'place',
       'shichen', 'solarDate', 'timezone', 'trueSolar', 'yearDivide',
     ].sort());
+  });
+
+  it('advertises calculate_ziwei_horoscope with the same birth-input contract plus target', async () => {
+    const res = await listHandler()({ method: 'tools/list' }, {});
+    const horoscope = res.tools.find((t: any) => t.name === 'calculate_ziwei_horoscope')!;
+    expect(horoscope.inputSchema.required).toEqual(['gender']);
+    // Same birth-input contract as calculate_ziwei (project brief: "takes the same
+    // birth-input contract as calculate_ziwei plus a target") plus `target`.
+    expect(Object.keys(horoscope.inputSchema.properties).sort()).toEqual([
+      'algorithm', 'ageDivide', 'astroType', 'brightness', 'clockTime', 'dayDivide', 'dstFold', 'fixLeap',
+      'gender', 'horoscopeDivide', 'longitude', 'lunarDate', 'lunarDateFrame', 'mutagens', 'place',
+      'shichen', 'solarDate', 'target', 'timezone', 'trueSolar', 'yearDivide',
+    ].sort());
+    expect(horoscope.inputSchema.properties.target.required).toEqual(['solarDate', 'clockTime']);
   });
 });
 

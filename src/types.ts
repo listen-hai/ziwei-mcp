@@ -8,6 +8,12 @@ export type {
   LookupLocationInput,
 } from './schemas/input';
 
+export type {
+  HoroscopeTargetInput,
+  ZiweiHoroscopeInput,
+  ValidatedZiweiHoroscopeInput,
+} from './schemas/horoscope';
+
 export interface WallDateTime {
   year: number;
   month: number;
@@ -112,4 +118,92 @@ export interface ZiweiCalculationResult {
   lunar: LunarOutput;
   palaces: PalaceOutput[];
   diagnostics: ZiweiDiagnostics;
+}
+
+/**
+ * A single 运限 (horoscope) scope — 大限/童限, 流年, 流月, 流日, or 流时. `name` is
+ * iztro's own label for this scope (e.g. "大限" vs "童限" — the SAME field
+ * distinguishes a decadal-limit scope from a childhood-limit one, so no separate
+ * flag is needed). `stars` (the scope's 运曜, by palace index 0-11) is omitted
+ * entirely for 小限 (age) — iztro's horoscope() never computes a stars array for
+ * it, and the horoscope-parity gate agrees.
+ */
+export interface HoroscopeScopeOutput {
+  name: string;
+  index: number;
+  stem: string;
+  branch: string;
+  palaceNames: string[];
+  mutagen: string[];
+  stars?: string[][];
+}
+
+export interface HoroscopeAgeOutput extends HoroscopeScopeOutput {
+  /** 虚岁 (nominal age), correctly sourced per defect-1 (see diagnostics.feedYearCompensation). */
+  nominalAge: number;
+}
+
+export interface HoroscopeYearlyOutput extends HoroscopeScopeOutput {
+  /** 岁前十二神 / 将前十二神, by palace index 0-11 — 流年-exclusive, from iztro's own yearlyDecStar. */
+  yearlyDecStars: { suiqian12: string[]; jiangqian12: string[] };
+}
+
+export interface ZiweiHoroscopeDiagnostics {
+  targetWallClock: string;
+  targetUtcInstant: string;
+  axisA_instant_forYearlyGanZhi: string;
+  axisB_localTrueSolarTime: string;
+  /** The target's lunar date, computed by this service (never iztro's own `lunarDate`/
+   * `solarDate` — spec: "Never pass through iztro's lunarDate/solarDate for the
+   * target — compute them"). Reflects the late-Zi-normalized date when
+   * lateZiNormalized is true, consistent with targetTimeIndex/axisB below it. */
+  targetLunar: { year: number; month: number; day: number; isLeapMonth: boolean };
+  targetTimeIndex: number;
+  lateZiNormalized: boolean;
+  yearlyGanZhi: string;
+  horoscopeDivideApplied: 'lichun' | 'lunar_new_year';
+  yearlyGanZhiNote: string;
+  feedYearCompensation: {
+    birthFeedYear: number;
+    birthLunarYear: number;
+    sixtyYearOffsetApplied: number;
+    decadalAgeSource: 'true-target' | 'anchor';
+    decadalAgeAnchorLunarYear?: number;
+    note: string;
+  };
+  yearlySource: 'true-target' | 'anchor';
+  yearlyAnchorLunarYear?: number;
+  monthlyAnchor: {
+    ganZhi: string;
+    convention: 'lunar_new_year';
+    note: string;
+  };
+  convention: {
+    horoscopeDivide: 'lichun' | 'lunar_new_year';
+    ageDivide: 'normal';
+    dayDivide: 'current' | 'forward';
+    algorithm: 'default' | 'zhongzhou';
+    astroType: 'heaven' | 'earth' | 'human';
+    fixLeap: boolean;
+    trueSolar: boolean;
+  };
+  locationSource: 'resolved' | 'caller_supplied' | 'mixed';
+  warnings: string[];
+  engineInfo: {
+    iztro: string;
+    lunarLite: string;
+    baziEngine: string;
+    trueSolarTimeEngine: string;
+    schemaVersion: string;
+  };
+}
+
+export interface ZiweiHoroscopeResult {
+  decadal: HoroscopeScopeOutput;
+  age: HoroscopeAgeOutput;
+  yearly: HoroscopeYearlyOutput;
+  monthly: HoroscopeScopeOutput;
+  daily: HoroscopeScopeOutput;
+  hourly: HoroscopeScopeOutput;
+  diagnostics: ZiweiHoroscopeDiagnostics;
 }

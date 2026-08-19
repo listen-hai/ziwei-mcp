@@ -131,10 +131,10 @@ describe('MCP end-to-end over stdio (built binary)', () => {
     expect(res.result.serverInfo.version).toBe(pkg.version);
   });
 
-  it('lists both tools with their input schemas', async () => {
+  it('lists all tools with their input schemas', async () => {
     const res = await session.send('tools/list');
     expect(res.error).toBeUndefined();
-    expect(res.result.tools.map((t: any) => t.name).sort()).toEqual(['calculate_ziwei', 'lookup_location']);
+    expect(res.result.tools.map((t: any) => t.name).sort()).toEqual(['calculate_ziwei', 'calculate_ziwei_horoscope', 'lookup_location']);
     for (const tool of res.result.tools) {
       expect(tool.inputSchema.type).toBe('object');
       expect(typeof tool.description).toBe('string');
@@ -160,6 +160,30 @@ describe('MCP end-to-end over stdio (built binary)', () => {
     expect(chart.lunar.timeIndex).toBe(3);
     expect(chart.lunar.shichen).toBe('卯');
     expect(chart.palaces).toHaveLength(12);
+  });
+
+  it('calculates a horoscope through the real transport', async () => {
+    const result = await session.callTool('calculate_ziwei_horoscope', {
+      place: 'Beijing',
+      solarDate: { year: 1990, month: 6, day: 15 },
+      clockTime: { hour: 8, minute: 0 },
+      gender: 'male',
+      target: { solarDate: { year: 2025, month: 6, day: 15 }, clockTime: { hour: 12, minute: 0 } },
+    });
+
+    expect(result.isError).toBeFalsy();
+    const horoscope = parseToolPayload(result);
+    expect(horoscope).not.toHaveProperty('palaces');
+    expect(horoscope).not.toHaveProperty('soulPalace');
+    for (const scope of ['decadal', 'age', 'yearly', 'monthly', 'daily', 'hourly']) {
+      expect(horoscope[scope].index).toBeGreaterThanOrEqual(0);
+      expect(horoscope[scope].index).toBeLessThanOrEqual(11);
+      expect(typeof horoscope[scope].stem).toBe('string');
+      expect(typeof horoscope[scope].branch).toBe('string');
+    }
+    expect(horoscope.age.nominalAge).toBeGreaterThan(0);
+    expect(horoscope.yearly.yearlyDecStars.suiqian12).toHaveLength(12);
+    expect(horoscope.diagnostics.feedYearCompensation).toBeDefined();
   });
 
   it('resolves geo-tz at runtime, which the bundle deliberately leaves external', async () => {
@@ -195,7 +219,7 @@ describe('MCP end-to-end over stdio (built binary)', () => {
 
     // The session must still be usable afterwards.
     const after = await session.send('tools/list');
-    expect(after.result.tools.length).toBe(2);
+    expect(after.result.tools.length).toBe(3);
   });
 
   it('keeps stdout free of anything but JSON-RPC', async () => {
