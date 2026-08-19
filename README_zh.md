@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/@lhk714/ziwei-mcp.svg)](https://www.npmjs.com/package/@lhk714/ziwei-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![CI](https://github.com/listen-hai/ziwei-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/listen-hai/ziwei-mcp/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-121%20passed%2C%200%20failed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-131%20passed%2C%200%20failed-brightgreen.svg)]()
 [![Bun](https://img.shields.io/badge/runtime-Bun%20%7C%20Node-black.svg)]()
 
 > 确定性紫微斗数排盘 MCP 服务：以 `iztro` 为安星引擎，外面包一层真实的天文时间层，并把每一个流派选择显式暴露成参数。
@@ -124,7 +124,7 @@ npx -y @lhk714/ziwei-mcp
 
 ## 🧪 验证
 
-`bun test` —— **121 个测试**，其中包括：
+`bun test` —— **131 个测试**，其中包括：
 
 - 一套**独立实现的古籍安星诀**，与 iztro 对拍数百张种子随机盘、约 18,000 项断言。这是钉死引擎的东西：上游任何一颗星的安放变了，测试就会红。
 - 立春边界逐时辰扫描，断言年干支**必须且只能在真实立春时刻翻一次** —— Z1 的回归防线。

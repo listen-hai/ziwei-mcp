@@ -11,6 +11,37 @@ import { calculateZiweiChart } from '../core/chart';
 import { lookupCity } from '../geo/resolver';
 import rootPkg from '../../package.json';
 
+// A record schema keyed by an enum (StarNameEnum) rejects every invalid key as its own
+// zod issue, and nothing bounds how many invalid keys a caller can put in one JS object
+// (measured: 50,000 bogus `brightness` keys -> 50,000 issues -> a 3.22MB error string).
+// The schema correctly rejects the payload fast; without these caps, the *reporting*
+// layer then hands that win back by writing a multi-MB string to stdout for the LLM
+// caller to choke on. Cap how many issues get named, and backstop the total length in
+// case a single issue's own message is huge (e.g. a long echoed value).
+const MAX_REPORTED_ISSUES = 8;
+const MAX_ERROR_MESSAGE_LENGTH = 4000;
+
+// Zod issue paths are dropped here in the old code, so the LLM caller sees a bare
+// "Required" or "Expected number, received string" with no field name — even
+// though the path (e.g. ["solarDate", "day"]) is right there on the issue. Prefix
+// it when present. The hand-written `.strict().refine(...)` messages in
+// schemas/input.ts (e.g. "Must provide either solarDate or lunarDate.") attach to
+// the whole object and carry an empty path — leave those bare rather than
+// prefixing a stray ": " separator onto an already-readable sentence.
+export function formatZodError(err: z.ZodError): string {
+  const formatted = err.issues.map(i =>
+    i.path.length > 0 ? `${i.path.join('.')}: ${i.message}` : i.message
+  );
+  const shown = formatted.slice(0, MAX_REPORTED_ISSUES);
+  const omitted = formatted.length - shown.length;
+  let msg = shown.join('; ');
+  if (omitted > 0) msg += `; …and ${omitted} more validation errors`;
+  if (msg.length > MAX_ERROR_MESSAGE_LENGTH) {
+    msg = `${msg.slice(0, MAX_ERROR_MESSAGE_LENGTH)}… (truncated)`;
+  }
+  return msg;
+}
+
 export function createZiweiMcpServer(): Server {
   const server = new Server(
     {
@@ -220,15 +251,8 @@ export function createZiweiMcpServer(): Server {
 
       throw new Error(`Unknown MCP tool: ${name}`);
     } catch (err: unknown) {
-      // Zod issue paths are dropped here in the old code, so the LLM caller sees a bare
-      // "Required" or "Expected number, received string" with no field name — even
-      // though the path (e.g. ["solarDate", "day"]) is right there on the issue. Prefix
-      // it when present. The hand-written `.strict().refine(...)` messages in
-      // schemas/input.ts (e.g. "Must provide either solarDate or lunarDate.") attach to
-      // the whole object and carry an empty path — leave those bare rather than
-      // prefixing a stray ": " separator onto an already-readable sentence.
       const errMsg = err instanceof z.ZodError
-        ? err.issues.map(i => (i.path.length > 0 ? `${i.path.join('.')}: ${i.message}` : i.message)).join('; ')
+        ? formatZodError(err)
         : err instanceof Error ? err.message : String(err);
       return {
         isError: true,

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'bun:test';
-import { createZiweiMcpServer } from '../src/mcp/server';
+import { z } from 'zod';
+import { createZiweiMcpServer, formatZodError } from '../src/mcp/server';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
 const listHandler = () => {
@@ -173,5 +174,66 @@ describe('MCP error paths', () => {
     const res = await call('non_existent_tool', {});
     expect(res.isError).toBe(true);
     expect(res.content[0].text).toContain('Unknown MCP tool');
+  });
+});
+
+describe('formatZodError bounding (context-bomb fix)', () => {
+  const makeIssues = (n: number): z.ZodIssue[] =>
+    Array.from({ length: n }, (_, i) => ({
+      code: z.ZodIssueCode.custom,
+      path: ['brightness', `bogus${i}`],
+      message: `"bogus${i}" is not a recognized star name (zh-CN).`,
+    }));
+
+  it('leaves a single-issue error exactly as before', () => {
+    const err = new z.ZodError(makeIssues(1));
+    expect(formatZodError(err)).toBe('brightness.bogus0: "bogus0" is not a recognized star name (zh-CN).');
+  });
+
+  it('leaves a two-issue error exactly as before', () => {
+    const err = new z.ZodError(makeIssues(2));
+    expect(formatZodError(err)).toBe(
+      'brightness.bogus0: "bogus0" is not a recognized star name (zh-CN).; brightness.bogus1: "bogus1" is not a recognized star name (zh-CN).'
+    );
+  });
+
+  it('bounds a many-issue error to the first few offenders plus an omitted-count', () => {
+    const err = new z.ZodError(makeIssues(50_000));
+    const msg = formatZodError(err);
+    // Names the first few offenders.
+    expect(msg).toContain('brightness.bogus0:');
+    expect(msg).toContain('brightness.bogus1:');
+    // Reports how many were omitted (50,000 issues minus however many are actually shown).
+    expect(msg).toContain('…and 49992 more validation errors');
+    // And the whole thing stays small — nowhere near the 3.22MB an unbounded join produces.
+    expect(msg.length).toBeLessThan(4100);
+  });
+
+  it('backstops the total length even when a single issue message is itself huge', () => {
+    const err = new z.ZodError([
+      { code: z.ZodIssueCode.custom, path: [], message: 'x'.repeat(1_000_000) },
+    ]);
+    const msg = formatZodError(err);
+    expect(msg.length).toBeLessThan(4100);
+    expect(msg).toContain('(truncated)');
+  });
+
+  it('produces a bounded end-to-end message for a real many-key brightness payload', async () => {
+    // Real (valid-shaped) 12-entry brightness array so only the *keys* are bad —
+    // isolates the key-count blowup this fix targets, one issue per bogus key.
+    const validEntries: string[] = ['庙', '旺', '得', '利', '平', '不', '陷', '', '庙', '旺', '得', '利'];
+    const brightness: Record<string, string[]> = {};
+    for (let i = 0; i < 2000; i++) brightness[`notAStar${i}`] = validEntries;
+
+    const res = await call('calculate_ziwei', {
+      place: 'Beijing', solarDate: { year: 2000, month: 1, day: 1 },
+      clockTime: { hour: 12, minute: 0 }, gender: 'male',
+      brightness,
+    });
+    expect(res.isError).toBe(true);
+    const text: string = res.content[0].text;
+    expect(text).toContain('[Ziwei Calculation Error]');
+    expect(text).toContain('…and 1992 more validation errors');
+    expect(text.length).toBeLessThan(4200);
   });
 });

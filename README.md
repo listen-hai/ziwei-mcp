@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/@lhk714/ziwei-mcp.svg)](https://www.npmjs.com/package/@lhk714/ziwei-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![CI](https://github.com/listen-hai/ziwei-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/listen-hai/ziwei-mcp/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-121%20passed%2C%200%20failed-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/tests-131%20passed%2C%200%20failed-brightgreen.svg)]()
 [![Bun](https://img.shields.io/badge/runtime-Bun%20%7C%20Node-black.svg)]()
 
 > Deterministic Zi Wei Dou Shu (紫微斗数排盘) Model Context Protocol (MCP) server: the `iztro` star-placement engine wrapped in a real astronomical time layer, with every school convention exposed as an explicit parameter.
@@ -125,7 +125,7 @@ This server does not calculate Bazi. Use [`@lhk714/bazi-mcp`](https://github.com
 
 ## 🧪 Verification
 
-`bun test` — **121 tests**, including:
+`bun test` — **131 tests**, including:
 
 - An **independent implementation of the classical star-placement rules** (安星诀) from the source texts, checked against iztro across hundreds of seeded random charts and ~18,000 assertions. This is what pins the engine: an upstream change to any star's placement fails the suite.
 - 立春-boundary scans asserting the year ganzhi flips **exactly once, at the true instant** — the regression guard for Z1.
