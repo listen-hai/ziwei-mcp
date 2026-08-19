@@ -28,7 +28,7 @@ export function createZiweiMcpServer(): Server {
     {
       name: 'calculate_ziwei',
       description:
-        'Precise Zi Wei Dou Shu (紫微斗数) chart calculation tool. Uses iztro as the star-placement engine, wrapped with True Solar Time, full IANA/DST handling, and an independently-determined year ganzhi (bypassing a known bug in iztro\'s own yearDivide:\'exact\' — see the engineInfo/yearDivideNote in the response). Supports any birth location worldwide. IMPORTANT: The `place` field requires an ENGLISH city name; translate from other languages first (e.g. 北京 → "Beijing", 東京 → "Tokyo"). Pass exactly ONE of `solarDate`/`lunarDate` and ONE of `clockTime`/`shichen`. There is no "unknown birth time" mode — the soul palace, body palace, and several star placements all depend on the birth hour, so a request without a usable time is rejected rather than returning a partial chart. If `shichen` is used instead of an exact `clockTime`, check `diagnostics.shichenAmbiguity` in the response — because a shichen is a ~2-hour window and True Solar Time correction is typically tens of minutes, most shichen inputs land near enough to a boundary that the soul palace and several star placements could plausibly belong to the neighboring double-hour instead; the chart returned uses the shichen midpoint. Four Pillars / Bazi are out of scope — call bazi-mcp for those (its time layer is shared with this tool, so results align).',
+        'Precise Zi Wei Dou Shu (紫微斗数) chart calculation tool. Uses iztro as the star-placement engine, wrapped with True Solar Time, full IANA/DST handling, and an independently-determined year ganzhi (bypassing a known bug in iztro\'s own yearDivide:\'exact\' — see the engineInfo/yearDivideNote in the response). Supports any birth location worldwide. IMPORTANT: The `place` field requires an ENGLISH city name; translate from other languages first (e.g. 北京 → "Beijing", 東京 → "Tokyo"). Pass exactly ONE of `solarDate`/`lunarDate` and ONE of `clockTime`/`shichen`. There is no "unknown birth time" mode — the soul palace, body palace, and several star placements all depend on the birth hour, so a request without a usable time is rejected rather than returning a partial chart. If `shichen` is used instead of an exact `clockTime`, check `diagnostics.shichenAmbiguity` in the response — because a shichen is a ~2-hour window and True Solar Time correction is typically tens of minutes, most shichen inputs land near enough to a boundary that the soul palace and several star placements could plausibly belong to the neighboring double-hour instead; the chart returned uses the shichen midpoint. `mutagens`/`brightness` are optional school/convention overrides passed through verbatim to iztro (see their own descriptions below); omit both to use iztro\'s built-in tables. Four Pillars / Bazi are out of scope — call bazi-mcp for those (its time layer is shared with this tool, so results align).',
       inputSchema: {
         type: 'object',
         properties: {
@@ -142,6 +142,16 @@ export function createZiweiMcpServer(): Server {
             type: 'boolean',
             description: 'Whether to apply True Solar Time correction (default: true)',
           },
+          mutagens: {
+            type: 'object',
+            description: 'School/convention override for 四化 (Four Transformations): maps a heavenly stem (甲-癸) to its own [禄,权,科,忌] star names (exactly 4, in that order), overriding iztro\'s built-in table for that stem only. Optional passthrough to iztro\'s config.mutagens; omit for the default table.',
+            additionalProperties: { type: 'array', items: { type: 'string' }, minItems: 4, maxItems: 4 },
+          },
+          brightness: {
+            type: 'object',
+            description: 'School/convention override for star brightness (庙旺得利平不陷): maps a star name to its own 12-entry brightness array (one per palace, iztro\'s internal 寅卯辰...丑 order), overriding iztro\'s built-in table for that star only. Optional passthrough to iztro\'s config.brightness; omit for the default table.',
+            additionalProperties: { type: 'array', items: { type: 'string' }, minItems: 12, maxItems: 12 },
+          },
         },
         required: ['gender'],
         additionalProperties: false,
@@ -210,8 +220,15 @@ export function createZiweiMcpServer(): Server {
 
       throw new Error(`Unknown MCP tool: ${name}`);
     } catch (err: unknown) {
+      // Zod issue paths are dropped here in the old code, so the LLM caller sees a bare
+      // "Required" or "Expected number, received string" with no field name — even
+      // though the path (e.g. ["solarDate", "day"]) is right there on the issue. Prefix
+      // it when present. The hand-written `.strict().refine(...)` messages in
+      // schemas/input.ts (e.g. "Must provide either solarDate or lunarDate.") attach to
+      // the whole object and carry an empty path — leave those bare rather than
+      // prefixing a stray ": " separator onto an already-readable sentence.
       const errMsg = err instanceof z.ZodError
-        ? err.issues.map(i => i.message).join('; ')
+        ? err.issues.map(i => (i.path.length > 0 ? `${i.path.join('.')}: ${i.message}` : i.message)).join('; ')
         : err instanceof Error ? err.message : String(err);
       return {
         isError: true,

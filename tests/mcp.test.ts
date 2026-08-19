@@ -34,8 +34,8 @@ describe('MCP tools/list', () => {
     expect(Object.keys(ziwei.inputSchema.properties)).not.toContain('latitude');
     // The advertised schema must not drift from the zod schema it is hand-mirrored from.
     expect(Object.keys(ziwei.inputSchema.properties).sort()).toEqual([
-      'algorithm', 'ageDivide', 'astroType', 'clockTime', 'dayDivide', 'dstFold', 'fixLeap',
-      'gender', 'horoscopeDivide', 'longitude', 'lunarDate', 'lunarDateFrame', 'place',
+      'algorithm', 'ageDivide', 'astroType', 'brightness', 'clockTime', 'dayDivide', 'dstFold', 'fixLeap',
+      'gender', 'horoscopeDivide', 'longitude', 'lunarDate', 'lunarDateFrame', 'mutagens', 'place',
       'shichen', 'solarDate', 'timezone', 'trueSolar', 'yearDivide',
     ].sort());
   });
@@ -117,6 +117,23 @@ describe('MCP error paths', () => {
     expect(text).toContain('Cannot provide both solarDate');
     expect(text).not.toContain('"code"');
     expect(text).not.toContain('"path"');
+    // Hand-written .refine() messages attach to the whole object (empty path) and must
+    // stay exactly as authored — no stray ": " prefix from the (absent) path.
+    expect(text).not.toContain(': Cannot provide both solarDate');
+  });
+
+  /**
+   * Finding #2: zod issue paths were being dropped (`i.message` only), so a caller
+   * saw a bare "Expected number, received string" with no indication of which field —
+   * even though the path (e.g. ["solarDate", "day"]) was right there on the issue.
+   */
+  it('prefixes field-level ZodError messages with their path', async () => {
+    const res = await call('calculate_ziwei', {
+      place: 'Beijing', solarDate: { year: 2000, month: 1, day: 'thirty-one' },
+      clockTime: { hour: 12, minute: 0 }, gender: 'male',
+    });
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toContain('solarDate.day:');
   });
 
   it('explains WHY timeUnknown is unsupported instead of a bare strict-mode rejection', async () => {
@@ -144,6 +161,12 @@ describe('MCP error paths', () => {
     });
     expect(ambiguous.isError).toBe(true);
     expect(ambiguous.content[0].text).toContain('matched multiple candidate cities');
+  });
+
+  it('rejects an oversized lookup_location query before it reaches the city scan (finding #5)', async () => {
+    const res = await call('lookup_location', { query: 'a'.repeat(1_000_000) });
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toContain('characters or fewer');
   });
 
   it('rejects an unknown tool name', async () => {

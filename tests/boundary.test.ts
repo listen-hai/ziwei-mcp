@@ -77,6 +77,25 @@ describe('8.2 DST gaps, folds and dstFold', () => {
     expect(res.palaces).toHaveLength(12);
     expect(res.diagnostics.warnings.some(w => w.includes('spring-forward gap'))).toBe(true);
   });
+
+  /**
+   * Finding #4: `lunarDateFrame:'beijing'` resolves its wall clock against
+   * Asia/Shanghai, not the birth place's own timezone — China had its own DST through
+   * 1991, including a spring-forward gap on 1986-05-04 (02:00 -> 03:00). 丑 spans
+   * 01:00-02:59, so its midpoint (02:00) lands exactly in that gap. Before the fix,
+   * this bypassed the shichen sample-point fallback entirely (it called wallToInstant
+   * directly) and hard-errored naming Asia/Shanghai; it must now recover with a
+   * warning, exactly like the local-frame case above.
+   */
+  it('falls back to a valid shichen sample point in the Beijing frame too, when the midpoint lands in a DST gap there', () => {
+    const res = chart({
+      timezone: 'America/Los_Angeles', longitude: -122.4443,
+      lunarDate: { year: 1986, month: 3, day: 26 }, lunarDateFrame: 'beijing',
+      shichen: '丑', gender: 'male',
+    });
+    expect(res.palaces).toHaveLength(12);
+    expect(res.diagnostics.warnings.some(w => w.includes('spring-forward gap') && w.includes('Asia/Shanghai'))).toBe(true);
+  });
 });
 
 describe('8.2 Lunar month handling', () => {
@@ -94,16 +113,15 @@ describe('8.2 Lunar month handling', () => {
   });
 
   /**
-   * KNOWN IMPLEMENTATION DEFECT — this test is expected to FAIL.
-   *
-   * 2021 has no leap 4th month. lunar-lite's `lunar2solar('2021-4-15', true)` silently
-   * ignores the leap flag and returns the ordinary 2021-4-15 (solar 2021-05-26), so the
-   * service happily emits a full chart for a date that never existed, with
-   * `lunar.isLeapMonth: false` quietly contradicting the caller's input and no warning.
-   * bazi-mcp rejects the same input ("Lunar date conversion failed").
-   *
-   * The correct behaviour is to reject (or at minimum warn loudly); a silent
-   * wrong-date chart is the worst possible outcome for a birth-chart service.
+   * 2021 has no leap 4th month. lunar-lite's own `lunar2solar('2021-4-15', true)`
+   * silently ignores the leap flag and returns the ordinary 2021-4-15 (solar
+   * 2021-05-26) — a full chart for a date that never existed, with
+   * `lunar.isLeapMonth: false` quietly contradicting the caller's input and no
+   * warning, which would be the worst possible outcome for a birth-chart service.
+   * `assertLeapMonthExists` (src/core/lunar.ts), called before any conversion in
+   * chart.ts, closes this: it round-trips through solar2lunar to confirm the named
+   * leap month genuinely exists before ever reaching lunar-lite's silent-ignore path,
+   * and rejects with a clear explanation otherwise. bazi-mcp rejects the same input.
    */
   it('rejects an invalid leap lunar month (2021 has no leap 4th month)', () => {
     expect(() =>
@@ -115,21 +133,24 @@ describe('8.2 Lunar month handling', () => {
   });
 
   /**
-   * KNOWN DEFECT (upstream, reachable) — this test is expected to FAIL.
-   *
    * Solar 1952-07-21 is 闰五月三十 1952: a real calendar day, correctly reported by
-   * lunar-lite as {lunarMonth:5, lunarDay:30, isLeap:true}. iztro 2.6.0 validates the
-   * day count against the NON-leap 5th month (29 days) even when isLeapMonth:true is
-   * passed, and throws "only 29 days in lunar year 1952 month 5". So NO chart can be
-   * produced for anyone born that day, at any location, in any timezone.
+   * lunar-lite as {lunarMonth:5, lunarDay:30, isLeap:true}. iztro 2.6.0's `type:'lunar'`
+   * entry point validates the day count against the NON-leap 5th month (29 days) even
+   * when isLeapMonth:true is passed, and would throw "only 29 days in lunar year 1952
+   * month 5" if used directly. chart.ts works around this (spec §5 "Defect B" comment)
+   * by feeding such dates to iztro via `type:'solar'` instead whenever no feed-year
+   * shift is needed (the overwhelming majority of births, this one included) — that
+   * entry point computes the lunar date internally via solar2lunar and never hits the
+   * day-count guard at all.
    *
    * This is NOT the probe-findings P2a feed-year crash: feedYear here equals lunar.year
-   * (1952), so `lunarYearForGanZhi`'s ±60 fallback never engages. It is a separate,
-   * uncovered failure mode that the differential battery in
-   * tests/global_multiregion.test.ts found independently.
+   * (1952), so `lunarYearForGanZhi`'s ±60 fallback never engages. It is a separate
+   * failure mode that the differential battery in tests/global_multiregion.test.ts
+   * found independently.
    *
-   * A calendar scan of 1900-2100 finds 17 such unbuildable days, including one in
-   * living memory and one still ahead:
+   * A calendar scan of 1900-2100 finds 17 such days that hit this defect if fed to
+   * iztro via `type:'lunar'` unmodified, including one in living memory and one still
+   * ahead — all 17 must build successfully via the `type:'solar'` workaround:
    *   1906-06-21 1914-07-22 1919-09-23 1925-06-20 1936-05-20 1938-09-23 1941-08-22
    *   1944-06-20 1952-07-21 1955-05-21 2017-08-21 2036-08-21 2047-07-22 2050-05-20
    *   2055-08-22 2058-06-20 2093-08-21
@@ -143,14 +164,66 @@ describe('8.2 Lunar month handling', () => {
     expect(res.palaces).toHaveLength(12);
   });
 
-  it('...and the same day is equally unbuildable via the lunarDate input path (lunar-lite rejects it too)', () => {
-    expect(() =>
+  /**
+   * The sole guard on the leap-30 recovery path in src/core/lunar.ts's `lunar2solar`
+   * wrapper (finding #3): a genuine 闰月三十 fed in via `lunarDate` must independently
+   * recover the correct solar date (lunar-lite's own `lunar2solar` would otherwise
+   * throw here too, for the same underlying reason as the `type:'lunar'` path above —
+   * see lunar.ts's docblock) and produce a chart identical to feeding the same birth
+   * via `solarDate` (the test directly above).
+   */
+  it('builds an identical chart for the same leap-30 day via the lunarDate input path as via solarDate', () => {
+    const viaLunar = chart({
+      timezone: 'Asia/Shanghai', longitude: 120,
+      lunarDate: { year: 2017, month: 6, day: 30, isLeapMonth: true },
+      clockTime: { hour: 12, minute: 0 }, gender: 'male',
+    });
+    expect(viaLunar.diagnostics.lunar.solarDate).toBe('2017-08-21');
+    expect(viaLunar.lunar).toMatchObject({ year: 2017, month: 6, day: 30, isLeapMonth: true });
+
+    const viaSolar = chart({
+      timezone: 'Asia/Shanghai', longitude: 120,
+      solarDate: { year: 2017, month: 8, day: 21 }, clockTime: { hour: 12, minute: 0 }, gender: 'male',
+    });
+    expect(viaLunar.palaces).toEqual(viaSolar.palaces);
+    expect(viaLunar.soulPalace).toEqual(viaSolar.soulPalace);
+    expect(viaLunar.fiveElementsClass).toBe(viaSolar.fiveElementsClass);
+  });
+
+  /**
+   * Finding #3: a genuinely too-short leap month (day 30 requested, but the leap
+   * month itself only has 29 days) is a correct refusal — but lunar-lite's own error
+   * text leaks its internal negative-month encoding for this exact case: 1900's leap
+   * 8th month has 29 days, and requesting day 30 of it throws lunar-lite's raw "only
+   * 29 days in lunar year 1900 month -8" (verified directly against lunar-typescript).
+   * The wrapper must translate this into our own wording that names the leap month
+   * explicitly and never leaks "-8".
+   */
+  it('rejects day 30 of a leap month that only has 29 days, without leaking lunar-lite\'s internal negative-month encoding', () => {
+    const call = () =>
       chart({
-        timezone: 'Asia/Shanghai', longitude: 120,
-        lunarDate: { year: 2017, month: 6, day: 30, isLeapMonth: true },
+        place: 'Beijing', lunarDate: { year: 1900, month: 8, day: 30, isLeapMonth: true },
         clockTime: { hour: 12, minute: 0 }, gender: 'male',
-      })
-    ).not.toThrow();
+      });
+    expect(call).toThrow('leap month 8 of year 1900 only has 29 days');
+    expect(call).not.toThrow(/-8\b/);
+  });
+
+  /**
+   * Finding #3: the same "day 30 of a 29-day leap month" refusal, but for a year
+   * (1903) where the leap month's regular twin happens to ALSO be 29 days — so
+   * lunar-lite's raw message never even reaches its negative-month branch, and reads
+   * "only 29 days in lunar year 1903 month 5" (no leap indication at all, positive
+   * month, indistinguishable from an ordinary-month error). Must still be reported as
+   * being about the leap month.
+   */
+  it('rejects day 30 of a leap month whose non-leap twin happens to share its (also too-short) length', () => {
+    const call = () =>
+      chart({
+        place: 'Beijing', lunarDate: { year: 1903, month: 5, day: 30, isLeapMonth: true },
+        clockTime: { hour: 12, minute: 0 }, gender: 'male',
+      });
+    expect(call).toThrow('leap month 5 of year 1903 only has 29 days');
   });
 
   // spec §9: fixLeap re-anchors a leap month at its 15th day. Day 20 crosses that
@@ -305,6 +378,42 @@ describe('8.2 Input validation matrix', () => {
     expect(lunar(1900)).toBe(true);
     expect(lunar(2100)).toBe(true);
     expect(lunar(2101)).toBe(false);
+  });
+
+  /**
+   * Finding #1 (spec §6): a schema-valid solarDate year (2100 is inside the
+   * schema's own 1900-2100) can still project past 2100 once converted to the
+   * Beijing-time (UTC+8) instant used for year-ganzhi determination (Axis A), for a
+   * birth late enough in the year in a timezone west of China. Before the fix, this
+   * surfaced @openfate/bazi-engine's own raw message ("year must be an integer
+   * between 1800 and 2100") — a different range and wording than what the schema
+   * told the caller. It must now use this service's own range/wording (spec §6:
+   * "两层校验用同一个范围、同一套文案"), and must not leak the upstream "1800" bound at all.
+   */
+  it('reports the Beijing-year-projection overflow with this service\'s own range and wording, not the upstream engine\'s', () => {
+    const call = () =>
+      chart({
+        timezone: 'America/Los_Angeles', longitude: -122.4443,
+        solarDate: { year: 2100, month: 12, day: 31 }, clockTime: { hour: 20, minute: 0 }, gender: 'male',
+      });
+    expect(call).toThrow('Beijing-time (UTC+8) year');
+    expect(call).toThrow('must be between 1900 and 2100');
+    expect(call).not.toThrow(/\b1800\b/);
+  });
+
+  /**
+   * Finding #5: `place`/`timezone`/`lookup_location`'s `query` accept arbitrary-length
+   * strings today. A multi-megabyte `place` costs several seconds of CPU in the
+   * 7,329-city linear scan (geo/resolver.ts) and blocks the single-threaded stdio
+   * server for every other in-flight request. Reject oversized input at the schema
+   * layer, before it ever reaches that scan.
+   */
+  it('rejects oversized place/timezone/query strings before they reach the city scan', () => {
+    const long = (n: number) => 'a'.repeat(n);
+    expect(ZiweiInputSchema.safeParse({ ...validBase, place: long(5_000_000) }).success).toBe(false);
+    expect(ZiweiInputSchema.safeParse({ ...validBase, place: undefined, longitude: -122.44, timezone: long(1000) }).success).toBe(false);
+    // Well within bounds must still work.
+    expect(ZiweiInputSchema.safeParse({ ...validBase, place: 'Tacoma, WA' }).success).toBe(true);
   });
 
   it('rejects out-of-range date and time components', () => {
@@ -466,5 +575,51 @@ describe('8.2 shichen input and its ambiguity reporting', () => {
     const viaClock = chart({ place: 'Beijing', solarDate: { year: 1998, month: 7, day: 31 }, clockTime: { hour: 14, minute: 0 }, gender: 'male' });
     expect(viaShichen.palaces).toEqual(viaClock.palaces);
     expect(viaShichen.lunar).toEqual(viaClock.lunar);
+  });
+});
+
+/**
+ * Finding #7 / spec §9 / §12: `mutagens` and `brightness` are 透传 (passthrough)
+ * school/convention overrides, plumbed straight through to iztro's own
+ * `config.mutagens` / `config.brightness` with no per-school presets.
+ */
+describe('spec §9 mutagens/brightness passthrough', () => {
+  const base = { place: 'Beijing', solarDate: { year: 2000, month: 8, day: 16 }, clockTime: { hour: 4, minute: 0 }, gender: 'male' as const };
+
+  it('overrides a star\'s brightness at every palace it appears in', () => {
+    const plain = chart(base);
+    const plainZiwei = plain.palaces.flatMap(p => p.majorStars).find(s => s.name === '紫微')!;
+    expect(plainZiwei.brightness).toBe('庙'); // this birth's default, per iztro's built-in table
+
+    const overridden = chart({
+      ...base,
+      brightness: { '紫微': ['陷', '陷', '陷', '陷', '陷', '陷', '陷', '陷', '陷', '陷', '陷', '陷'] },
+    });
+    const overriddenZiwei = overridden.palaces.flatMap(p => p.majorStars).find(s => s.name === '紫微')!;
+    expect(overriddenZiwei.brightness).toBe('陷');
+    // Nothing else about the chart should move — only the requested star's brightness.
+    expect(overridden.soulPalace).toEqual(plain.soulPalace);
+    expect(overridden.palaces.map(p => p.majorStars.map(s => s.name))).toEqual(plain.palaces.map(p => p.majorStars.map(s => s.name)));
+  });
+
+  it('overrides which star carries a stem\'s mutagen', () => {
+    const plain = chart(base);
+    const yearStem = plain.diagnostics.yearGanZhi[0];
+    expect(plain.palaces.flatMap(p => [...p.majorStars, ...p.minorStars]).find(s => s.name === '太阴')?.mutagen).not.toBe('禄');
+
+    const overridden = chart({ ...base, mutagens: { [yearStem]: ['太阴', '太阴', '太阴', '太阴'] } });
+    const taiyin = overridden.palaces.flatMap(p => [...p.majorStars, ...p.minorStars]).find(s => s.name === '太阴')!;
+    expect(taiyin.mutagen).toBe('禄');
+  });
+
+  it('rejects malformed override shapes', () => {
+    // mutagens: wrong array length (must be exactly 4, [禄,权,科,忌]).
+    expect(ZiweiInputSchema.safeParse({ ...base, mutagens: { '甲': ['廉贞', '破军'] } }).success).toBe(false);
+    // mutagens: not a real heavenly stem.
+    expect(ZiweiInputSchema.safeParse({ ...base, mutagens: { 'X': ['廉贞', '破军', '武曲', '太阳'] } }).success).toBe(false);
+    // brightness: wrong array length (must be exactly 12, one per palace).
+    expect(ZiweiInputSchema.safeParse({ ...base, brightness: { '紫微': ['庙', '旺'] } }).success).toBe(false);
+    // brightness: not a real brightness grade.
+    expect(ZiweiInputSchema.safeParse({ ...base, brightness: { '紫微': Array(12).fill('X') } }).success).toBe(false);
   });
 });

@@ -323,7 +323,10 @@ describe('Differential battery: 20 pathological timezones', () => {
   it('800 seeded charts stay internally consistent with the classical rules', () => {
     const { charts, tolerated, knownDefect, failures } = runBattery('pathological', PATHOLOGICAL, 40, 19940101);
     expect(failures.slice(0, 20)).toEqual([]);
-    // EXPECTED TO FAIL: hits the 闰月三十 defect (1952-07-21 = 1952 闰五月三十).
+    // Would have hit the 闰月三十 defect (1952-07-21 = 1952 闰五月三十) if that random
+    // draw landed on one of the 17 affected days; chart.ts's type:'solar' workaround
+    // (see tests/boundary.test.ts's "leap-30" tests) means it doesn't crash even if it
+    // does, so this bucket should stay empty.
     expect(knownDefect).toEqual([]);
     expect(charts + tolerated + knownDefect.length).toBe(800);
     expect(charts).toBeGreaterThan(700);

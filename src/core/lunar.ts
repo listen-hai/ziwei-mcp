@@ -6,48 +6,73 @@ export { solar2lunar };
  * Wraps lunar-lite's own `lunar2solar` to fix a bug in lunar-lite itself (not just
  * iztro — iztro's `type:'lunar'` entry point turns out to call this exact same
  * function under the hood, see node_modules/iztro/lib/astro/astro.js:268 and
- * FunctionalAstrolabe.js:299, both `lunar2solar(dateStr, isLeapMonth)`): for a
- * genuine 闰月三十 (leap-month 30th day), it validates `lunarDay` against the
- * NON-leap twin month's day count and throws "only 29 days in lunar year Y month M"
- * even though the leap month genuinely has 30 days that day (verified: days 1-29 of
- * 2017's leap 6th month all resolve fine via lunar2solar; only day 30 throws, and
- * solar2lunar independently confirms solar 2017-08-21 IS 闰六月三十). 17 such days
- * exist between 1900-2100 (e.g. 2017-08-21) — this is the same defect that also
- * crashes iztro's `type:'lunar'` entry point, just hit here from our own conversion
- * of a caller-supplied `lunarDate` into a wall-clock solar date, which iztro's
- * `type:'solar'` workaround (see chart.ts) doesn't cover since it isn't invoking
- * iztro at all at this point. Work around it the same way: days 1..N of the leap
- * month resolve fine (N = the twin month's length from the error message), and the
- * leap month's days are contiguous on the solar calendar, so day N+1's solar date
- * is guessed as exactly one calendar day after day N's — then verified by
- * round-tripping through solar2lunar before being trusted (a leap month can
- * itself be short too, e.g. 29 days; in that case N+1 doesn't exist there
- * either and the guess would silently land on the 1st of the FOLLOWING lunar
- * month instead, which must be rejected rather than mislabeled as day N+1 of
- * the requested leap month).
+ * FunctionalAstrolabe.js:299, both `lunar2solar(dateStr, isLeapMonth)`).
+ *
+ * lunar-lite's own `lunar2solar` (node_modules/lunar-lite/lib/convertor.js) always
+ * constructs the NON-leap twin month FIRST — `Lunar.fromYmd(year, month, day)` — and
+ * only re-constructs with its internal negative-month leap encoding
+ * (`Lunar.fromYmd(year, -month, day)`) if that first call succeeds AND `month` is
+ * genuinely this year's leap month. Two consequences, verified against
+ * lunar-typescript directly:
+ *   1. If the LEAP month is one day longer than its non-leap twin (e.g. 2017's leap
+ *      6th month has 30 days, the regular 6th month only 29) — a genuine, real
+ *      calendar day, e.g. 2017-08-21 (闰六月三十) — the first (twin-month) probe
+ *      throws before ever reaching the leap-month construction, even though the
+ *      leap day is real. 17 such days exist in 1900-2100.
+ *   2. If the requested day genuinely does not exist (in EITHER twin), the thrown
+ *      message is unreliable for a caller-facing error: sometimes it names the
+ *      LEAP month's own length but leaks lunar-lite's internal negative-month
+ *      encoding (e.g. "...month -8" for 1900's leap 8th month, 29 days, day 30
+ *      requested), and sometimes — when the two twins happen to share a length —
+ *      it comes from the FIRST (non-leap) probe and never even mentions "leap" at
+ *      all (e.g. 1903's leap 5th month is also 29 days: "...month 5", positive,
+ *      indistinguishable from an ordinary-month error). 42 such years in 1900-2100.
+ * Case 1 is a real day that must be recovered; case 2 is a correct refusal whose
+ * wording must not leak internals or misattribute which month it's about. Handle
+ * both directly, independent of which of lunar-lite's two probes happened to throw
+ * first: anchor on the leap month's own day 1 (always safe to construct — no day-1
+ * leap month is ever this short) and walk forward by (day-1) days, verifying via
+ * solar2lunar that the result actually round-trips back to the requested leap day
+ * before trusting it.
  */
 export function lunar2solar(dateStr: string, isLeapMonth = false): ReturnType<typeof lunar2solarRaw> {
   try {
     return lunar2solarRaw(dateStr, isLeapMonth);
   } catch (err) {
-    const match = /only (\d+) days in lunar year (-?\d+) month (\d+)/.exec((err as Error).message);
+    // Only handle the day-count guard's own error shape; anything else (e.g. an
+    // out-of-range month) should still surface as-is.
+    if (!isLeapMonth || !/^only \d+ days in lunar year -?\d+ month -?\d+$/.test((err as Error).message)) {
+      throw err;
+    }
     const [yearStr, monthStr, dayStr] = dateStr.split(/[-/]/);
     const month = Number(monthStr);
     const day = Number(dayStr);
-    // Only handle the exact off-by-one leap-day-30 case; anything else (e.g. a
-    // genuinely out-of-range day, or the leap month itself being too short —
-    // that error carries a *negative* month number from lunar-lite's internal
-    // leap-month representation and won't match this pattern) should still
-    // surface as an error.
-    if (!isLeapMonth || !match || day !== Number(match[1]) + 1) throw err;
-    const base = lunar2solarRaw(`${yearStr}-${month}-${match[1]}`, true);
-    const next = new Date(Date.UTC(base.solarYear, base.solarMonth - 1, base.solarDay + 1));
-    const solarYear = next.getUTCFullYear();
-    const solarMonth = next.getUTCMonth() + 1;
-    const solarDay = next.getUTCDate();
+
+    const day1 = lunar2solarRaw(`${yearStr}-${month}-1`, true);
+    const day1RoundTrip = solar2lunar(`${day1.solarYear}-${pad(day1.solarMonth)}-${pad(day1.solarDay)}`);
+    // Defensive: if `month` isn't actually this lunar year's leap month at all (a
+    // misuse of this function that bypassed the caller-side assertLeapMonthExists
+    // check below), day 1 itself resolves to the ordinary month instead of a leap
+    // one. Don't fabricate a leap-month length in that case — surface the original
+    // error and let the caller's own "no such leap month" check own the messaging.
+    if (!day1RoundTrip.isLeap || day1RoundTrip.lunarMonth !== month) throw err;
+
+    const candidate = new Date(Date.UTC(day1.solarYear, day1.solarMonth - 1, day1.solarDay + (day - 1)));
+    const solarYear = candidate.getUTCFullYear();
+    const solarMonth = candidate.getUTCMonth() + 1;
+    const solarDay = candidate.getUTCDate();
     const roundTrip = solar2lunar(`${solarYear}-${pad(solarMonth)}-${pad(solarDay)}`);
-    if (!roundTrip.isLeap || roundTrip.lunarMonth !== month || roundTrip.lunarDay !== day) throw err;
-    return { solarYear, solarMonth, solarDay, toString: () => `${solarYear}-${solarMonth}-${solarDay}` };
+    if (roundTrip.isLeap && roundTrip.lunarMonth === month && roundTrip.lunarDay === day) {
+      return { solarYear, solarMonth, solarDay, toString: () => `${solarYear}-${solarMonth}-${solarDay}` };
+    }
+
+    // Genuine refusal: the requested day doesn't exist in this leap month. Report the
+    // leap month's own actual length (via getTotalDaysOfLunarMonth on its day 1) —
+    // not lunar-lite's ambiguous/internal-encoding-leaking message (see comment above).
+    const actualDays = getTotalDaysOfLunarMonth(`${day1.solarYear}-${pad(day1.solarMonth)}-${pad(day1.solarDay)}`);
+    throw new Error(
+      `Lunar leap month ${month} of year ${yearStr} only has ${actualDays} day${actualDays === 1 ? '' : 's'}; day ${day} does not exist. Please double-check the birth record.`
+    );
   }
 }
 

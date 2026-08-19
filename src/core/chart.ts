@@ -1,5 +1,6 @@
 import { astro } from 'iztro';
 import type FunctionalAstrolabe from 'iztro/lib/astro/FunctionalAstrolabe';
+import type { ConfigMutagens } from 'iztro/lib/data/types';
 import { calculateBaziChart } from '@openfate/bazi-engine';
 import iztroPkg from 'iztro/package.json';
 import lunarLitePkg from 'lunar-lite/package.json';
@@ -7,7 +8,7 @@ import baziEnginePkg from '@openfate/bazi-engine/package.json';
 import trueSolarTimePkg from '@openfate/true-solar-time/package.json';
 
 import { ValidatedZiweiInput, WallDateTime, ZiweiCalculationResult, ZiweiDiagnostics } from '../types';
-import { ZIWEI_DEFAULTS } from '../schemas/input';
+import { ZIWEI_DEFAULTS, ZIWEI_YEAR_MAX, yearRangeMessage } from '../schemas/input';
 import { wallToInstant, instantToWall, toUTCWall, tzOffsetMinutes, getStandardOffsetMinutes, formatOffsetString } from './time';
 import { getShichenMidpoint, getShichenSamplePoints } from './shichen';
 import { toTimeIndex, trueSolarTimeIndex, shichenCandidateTimeIndexes, timeIndexToShichen } from './time-index';
@@ -54,12 +55,18 @@ export function calculateZiweiChart(input: ValidatedZiweiInput): ZiweiCalculatio
   const baseHour = input.clockTime ? input.clockTime.hour : getShichenMidpoint(input.shichen!).hour;
   const baseMinute = input.clockTime ? input.clockTime.minute : getShichenMidpoint(input.shichen!).minute;
 
-  // Resolves a local wall clock to a UTC instant. If the wall clock was built from a
-  // shichen midpoint and lands exactly in a DST spring-forward gap, falls back to the
-  // first shichen sample point (start/mid/end) that does exist, mirroring bazi-mcp.
-  function resolveWallInstant(wall: WallDateTime) {
+  // Resolves a local wall clock to a UTC instant in timezone `tz` (defaults to the
+  // birth place's timezone). If the wall clock was built from a shichen midpoint and
+  // lands exactly in a DST spring-forward gap, falls back to the first shichen sample
+  // point (start/mid/end) that does exist, mirroring bazi-mcp. Also used for the
+  // lunarDateFrame:'beijing' path with tz:'Asia/Shanghai' (finding #4) — China had its
+  // own spring-forward gaps through 1991, and that frame's shichen midpoint can land
+  // in one (e.g. 1986-05-04 02:00 Asia/Shanghai) exactly like the local-frame path
+  // does; without this, that call bypassed the fallback entirely and hard-errored
+  // naming Asia/Shanghai instead of recovering with a warning like every other path.
+  function resolveWallInstant(wall: WallDateTime, tz: string = loc.timezone) {
     try {
-      return { wall, result: wallToInstant(wall, loc.timezone, input.dstFold) };
+      return { wall, result: wallToInstant(wall, tz, input.dstFold) };
     } catch (err) {
       if (!input.shichen || input.clockTime || !(err as Error).message.includes('spring-forward gap')) {
         throw err;
@@ -68,9 +75,9 @@ export function calculateZiweiChart(input: ValidatedZiweiInput): ZiweiCalculatio
         if (pt.hour === wall.hour && pt.minute === wall.minute) continue;
         try {
           const fallbackWall = { ...wall, hour: pt.hour, minute: pt.minute };
-          const result = wallToInstant(fallbackWall, loc.timezone, input.dstFold);
+          const result = wallToInstant(fallbackWall, tz, input.dstFold);
           warnings.push(
-            `The midpoint of shichen "${input.shichen}" (${pad(wall.hour)}:${pad(wall.minute)}) falls in a DST spring-forward gap and does not exist; used ${pad(pt.hour)}:${pad(pt.minute)} instead. Please double-check the exact clock time.`
+            `The midpoint of shichen "${input.shichen}" (${pad(wall.hour)}:${pad(wall.minute)}) falls in a DST spring-forward gap in ${tz} and does not exist; used ${pad(pt.hour)}:${pad(pt.minute)} instead. Please double-check the exact clock time.`
           );
           return { wall: fallbackWall, result };
         } catch {
@@ -109,7 +116,7 @@ export function calculateZiweiChart(input: ValidatedZiweiInput): ZiweiCalculatio
       // misresolve) a DST fold at the birth place even though the instant itself was
       // never ambiguous.
       const beijingWall: WallDateTime = { year: conv.solarYear, month: conv.solarMonth, day: conv.solarDay, hour: baseHour, minute: baseMinute, second: 0 };
-      instant = wallToInstant(beijingWall, 'Asia/Shanghai', input.dstFold).instant;
+      instant = resolveWallInstant(beijingWall, 'Asia/Shanghai').result.instant;
       localWall = instantToWall(instant, loc.timezone);
       offsetMinutes = tzOffsetMinutes(instant, loc.timezone);
       const janOffset = tzOffsetMinutes(Date.UTC(localWall.year, 0, 15, 12, 0), loc.timezone);
@@ -214,6 +221,27 @@ export function calculateZiweiChart(input: ValidatedZiweiInput): ZiweiCalculatio
   // bazi-mcp's dual-axis.ts step 5, so the two projects never disagree on which side
   // of 立春 a birth falls (spec §5 Z1, §6 hard rule 3).
   const beijingWallForA = toUTCWall(instant + 8 * 3600000);
+
+  // Finding #1: the schema (src/schemas/input.ts) only bounds the caller's own
+  // wall-clock year (1900-2100). It does NOT bound the Beijing-projected year computed
+  // above, which is computed unconditionally regardless of yearDivide (this runs before
+  // the branch that decides whether the value is even used). A schema-valid instant near
+  // a UTC year boundary in a timezone west of China (e.g. solarDate 2100-12-31 20:00
+  // America/Los_Angeles) projects to Beijing year 2101, outside @openfate/bazi-engine's
+  // own 1800-2100 range (see node_modules/@openfate/bazi-engine/dist/core/validation.js) —
+  // and without this guard, calculateBaziChart below throws ITS raw message ("year must
+  // be an integer between 1800 and 2100"), a different range and wording than what the
+  // schema told the caller (spec §6: "两层校验用同一个范围、同一套文案"). Only the max needs
+  // guarding here: the engine's own floor (1800) is 100 years below the schema's floor
+  // (1900), and a UTC-offset day shift can move the Beijing year at most +/-1 from the
+  // schema-valid wall-clock year, so a schema-valid year can never project below 1899 —
+  // still inside the engine's range. Fail with our own wording before ever calling in.
+  if (beijingWallForA.year > ZIWEI_YEAR_MAX) {
+    throw new Error(
+      `${yearRangeMessage('The Beijing-time (UTC+8) year of the resolved birth instant')} The birth instant's own wall-clock year was within that range, but this service always determines the year ganzhi from the Beijing-time (UTC+8) projection of the exact birth instant (Axis A, spec §6) — for a birth within roughly a day of a UTC year boundary, in a timezone west of China, that projection can fall in the following year. Beijing year computed: ${beijingWallForA.year}.`
+    );
+  }
+
   const A = calculateBaziChart({
     year: beijingWallForA.year,
     month: beijingWallForA.month,
@@ -244,6 +272,16 @@ export function calculateZiweiChart(input: ValidatedZiweiInput): ZiweiCalculatio
       ageDivide: opts.ageDivide,
       dayDivide: opts.dayDivide,
       algorithm: opts.algorithm,
+      // spec §9/§12 passthrough (finding #7): plumbing only, validated for shape by
+      // MutagensSchema/BrightnessSchema (src/schemas/input.ts), not re-validated here.
+      // Cast needed for mutagens only: zod's z.record(HeavenlyStemEnum, ...) infers
+      // star-name entries as plain `string[]`, while iztro's own ConfigMutagens types
+      // them as `StarName[]` (its own closed union of ~160 literal star names, which
+      // the schema deliberately does not re-enumerate — see MutagensSchema's comment).
+      // brightness needs no cast: BrightnessValueEnum's members are already literal
+      // subsets of iztro's Brightness union, so it's structurally compatible as-is.
+      mutagens: input.mutagens as ConfigMutagens | undefined,
+      brightness: input.brightness,
     },
   };
 
