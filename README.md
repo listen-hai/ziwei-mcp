@@ -16,7 +16,7 @@
 
 Every Zi Wei library in the ecosystem is ultimately [`iztro`](https://github.com/SylarLong/iztro) — it is the one real engine, and its star placement is correct. What has been missing is a server that feeds it the *right time*.
 
-`@lhk714/ziwei-mcp` is that layer. It gives an LLM a correct chart for **any birthplace on Earth, in any year from 1900 to 2100**, and names the school convention behind every switch instead of silently picking one.
+`@lhk714/ziwei-mcp` is that layer. It gives an LLM a correct chart for **any birthplace on Earth, in any year from 1900 through 2100 (Beijing time)**, and names the school convention behind every switch instead of silently picking one.
 
 ```
 Birth Wall Clock + IANA Timezone  (1990-06-15 20:00 America/Los_Angeles)
