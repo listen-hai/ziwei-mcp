@@ -224,7 +224,11 @@ export function calculateZiweiHoroscope(input: ValidatedZiweiHoroscopeInput): Zi
   // different 虚岁/大限/小限 for the identical real target). |baseOffset| <= 1 is
   // always far smaller than 30, so rounding to the nearest 60 always isolates
   // exactly the 60-multiple component, never the intentional ±1.
-  const sixtyOffset = Math.round((natal.feedYear - natal.lunarConv.lunarYear) / 60) * 60;
+  // `|| 0` normalizes the `-0` that `Math.round(-1/60)*60` produces for a -1
+  // baseOffset birth (Object.is(-0,0) is false; serialization hides it but it's
+  // a wart) — never changes a real nonzero offset, since -0 is the only falsy
+  // output this expression can produce.
+  const sixtyOffset = (Math.round((natal.feedYear - natal.lunarConv.lunarYear) / 60) * 60) || 0;
 
   // ── decadal/age and yearly can each need their OWN source date, decoupled from
   // the true-target date used for monthly/daily/hourly:
@@ -252,7 +256,49 @@ export function calculateZiweiHoroscope(input: ValidatedZiweiHoroscopeInput): Zi
   // leap-month >15-day rule. Nothing here reimplements that arithmetic — it only
   // chooses which already-correct iztro answer to read from which call.
   const primaryDateStr = fmtDate(effTargetSolarDate);
-  const decadalAgeAnchorLunarYear = sixtyOffset !== 0 ? targetLunarConv.lunarYear + sixtyOffset : undefined;
+
+  // ── Defect 1c: iztro's 虚岁 is `目标农历年(正月初一) − 喂入农历年(feedYear) + 1` — the
+  // target side is ALWAYS read on the 正月初一 axis (never lichun-adjusted; a target
+  // that itself falls in a 立春↔正月初一 window still counts by 正月初一 there too —
+  // pinned by the "defect 2" window test, which requires 虚岁/大限/小限 to be BYTE-
+  // IDENTICAL between horoscopeDivide:'lichun' and :'lunar_new_year' for the same
+  // target, i.e. age must never move with horoscopeDivide). The birth side is the
+  // ganzhi/lichun-adjusted feedYear (defect 1 above, deliberately NOT the true birth
+  // year). Mixing a 正月初一-axis target against a lichun-axis birth is correct for
+  // every target that has itself already reached the birth's shifted epoch — that's
+  // the whole point of the lichun school (verified by the three "defect 1b" tests:
+  // a +1-window birth's 虚岁 for a far target is feedYear-based, one LOWER than naive
+  // 正月初一 arithmetic would give, and that must never be "fixed" away).
+  //
+  // But the subtraction is only valid once the target has reached that epoch. For a
+  // +1-window birth (feedYear = true birth lunar year + 1), a target whose own true
+  // lunar year is STILL the birth's true year — i.e. anywhere from the birth instant
+  // through the eve of that year's own 正月初一 — hasn't gotten there yet: zero 正月
+  // 初一s have elapsed since birth, so 虚岁 must read 1, but the raw subtraction reads
+  // targetTrueYear − (birthTrueYear+1) + 1 = 0 (and iztro's OWN internal handling of a
+  // non-positive result is the index:-1/untranslated-key garbage defect 5b exists to
+  // block — a target this close to birth reaches that regime with no ±60 involved at
+  // all, defect 5b's guard alone can't see it because it correctly admits same-lunar-
+  // year targets per spec, see the "accepts a same-lunar-year target before the birth
+  // date" test).
+  //
+  // Floor the birth side at min(feedYear, targetTrueYear) instead of always using the
+  // raw feedYear — equivalently: anchor the decadal/age call at natal.feedYear itself
+  // (nominalAge = feedYear − feedYear + 1 = 1, exactly) whenever the target hasn't yet
+  // reached the birth's own (±60-stripped) epoch. This reduces to the untouched ±60-
+  // only formula the instant the target DOES reach it (targetTrueYear >= feedYear -
+  // sixtyOffset), so it changes nothing for any already-verified far-target case —
+  // it only ever fires in the exact narrow slice described above (provably: the
+  // pre-birth guard already ensures targetTrueYear >= birthTrueYear, and feedYear is
+  // at most birthTrueYear+1, so this branch can only trigger when baseOffset is
+  // exactly +1 and targetTrueYear == birthTrueYear).
+  const birthEpochLunarYear = natal.feedYear - sixtyOffset;
+  const decadalAgeAnchorLunarYear =
+    targetLunarConv.lunarYear < birthEpochLunarYear
+      ? natal.feedYear
+      : sixtyOffset !== 0
+        ? targetLunarConv.lunarYear + sixtyOffset
+        : undefined;
   const feedLunarYearForYearly = lunarYearForGanZhi(yearlyGanZhi, targetLunarConv.lunarYear, 6, 1, false);
   const yearlyAnchorLunarYear = feedLunarYearForYearly !== targetLunarConv.lunarYear ? feedLunarYearForYearly : undefined;
 
