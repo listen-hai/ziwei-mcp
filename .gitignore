@@ -21,3 +21,6 @@ bun.lockb
 
 # Internal design docs (not for public repo)
 
+
+# Generated knowledge graph (rebuildable via /graphify)
+graphify-out/
