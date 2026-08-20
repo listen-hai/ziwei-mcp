@@ -24,7 +24,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Run Test Suite
-        run: bun test
+        run: bun run test
 
       - name: Build Bundle
         run: bun run build
