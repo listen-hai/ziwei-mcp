@@ -176,6 +176,28 @@ describe('8.3 timeIndex 0 (早子时) vs 12 (晚子时)', () => {
     const earlyCurrent = chart({ ...base, clockTime: { hour: 0, minute: 30 }, dayDivide: 'current' });
     expect(early.palaces).toEqual(earlyCurrent.palaces);
   });
+
+  it('dayDivideNote (§8.4 disclosure gap): fires only for dayDivide:"forward" + timeIndex 12', () => {
+    // The one combination where iztro's star placement actually uses a different
+    // lunar day than `lunar.day` reports (location.js: `lunarDay + 1`).
+    const late = chart({ ...base, clockTime: { hour: 23, minute: 30 }, dayDivide: 'forward' });
+    expect(late.lunar.timeIndex).toBe(12);
+    expect(late.lunar.day).toBe(17);
+    expect(late.diagnostics.starPlacementLunarDay).toBe(18);
+    expect(late.diagnostics.dayDivideNote).toContain('17');
+    expect(late.diagnostics.dayDivideNote).toContain('18');
+    expect(late.diagnostics.dayDivideNote).toContain("dayDivide is 'forward'");
+
+    // Must NOT fire for the other three (dayDivide, timeIndex) combinations, where
+    // star placement and `lunar.day` never diverge.
+    const early = chart({ ...base, clockTime: { hour: 0, minute: 30 }, dayDivide: 'forward' });
+    const lateCurrent = chart({ ...base, clockTime: { hour: 23, minute: 30 }, dayDivide: 'current' });
+    const earlyCurrent = chart({ ...base, clockTime: { hour: 0, minute: 30 }, dayDivide: 'current' });
+    for (const res of [early, lateCurrent, earlyCurrent]) {
+      expect(res.diagnostics.dayDivideNote).toBeUndefined();
+      expect(res.diagnostics.starPlacementLunarDay).toBeUndefined();
+    }
+  });
 });
 
 describe('8.3 Structural invariants of the twelve palaces', () => {

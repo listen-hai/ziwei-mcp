@@ -84,6 +84,19 @@ export interface ZiweiDiagnostics {
     beijingSameDay: string;
   };
   timeIndex: number;
+  /** Only present when dayDivide:'forward' AND timeIndex 12 (晚子时) — the one
+   * combination where iztro's star placement (location.js: `lunarDay + 1`) actually
+   * uses a different lunar day than `lunar.day` reports. See `dayDivideNote`. */
+  starPlacementLunarDay?: number;
+  /** The day-axis counterpart of `yearDivideNote` — spec §5 "Z2": iztro shifts star
+   * placement (紫微 and everything derived from it) forward one lunar day for a
+   * 晚子时 birth under dayDivide:'forward', but its own `lunarDate` display field
+   * does NOT follow (which is exactly why this project never passes that field
+   * through — see trimChart). `lunar.day` here reports the birth's true lunar day;
+   * this note says plainly that star placement used the day after it, and why.
+   * Absent for every other combination of dayDivide/timeIndex, where the two never
+   * diverge. */
+  dayDivideNote?: string;
   shichenAmbiguity?: {
     isAmbiguous: boolean;
     candidateTimeIndexes: number[];

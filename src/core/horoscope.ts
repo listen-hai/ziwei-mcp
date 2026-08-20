@@ -172,6 +172,12 @@ export function calculateZiweiHoroscope(input: ValidatedZiweiHoroscopeInput): Zi
   // normalized) instant — only the calendar date fed to iztro's horoscope() call
   // itself, and everything derived from IT (lunar date, pre-birth check, yearly
   // anchor base year), uses the normalized one.
+  // (§8.4 external-comparison follow-up: the natal path's diagnostics.dayDivideNote
+  // discloses a DIFFERENT desync — iztro's star-placement code, location.js, shifting
+  // the lunar day forward one under dayDivide:'forward' + timeIndex 12. That code path
+  // is never reached from horoscope(), which is exactly the "dayDivide has no effect"
+  // finding below — so horoscope() needs no dayDivideNote counterpart of its own;
+  // lateZiNormalized + the warning already are this path's full disclosure.)
   const lateZiNormalized = targetSolarIdx.timeIndex === 12;
   const targetTimeIndex = lateZiNormalized ? 0 : targetSolarIdx.timeIndex;
   const effTargetSolarDate = lateZiNormalized

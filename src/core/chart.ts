@@ -500,6 +500,16 @@ export function calculateZiweiChart(input: ValidatedZiweiInput): ZiweiCalculatio
   const trimmed = trimChart(chart);
   const beijingWallOfInstant = instantToWall(instant, 'Asia/Shanghai');
 
+  // spec §5 Z2: iztro (node_modules/iztro/lib/star/location.js:47) places 紫微 (and
+  // everything derived from it) using `lunarDay + 1` whenever timeIndex===12 (晚子时)
+  // AND dayDivide!=='current' — but its own display fields never follow that shift
+  // (that desync is exactly why this project computes `lunar.day` itself instead of
+  // passing iztro's through, per trimChart's comment). Disclose the shift only where
+  // it actually bites: every other (dayDivide, timeIndex) combination places stars on
+  // the same lunar day `lunar.day` already reports, so adding this unconditionally
+  // would be boilerplate, not signal.
+  const dayDivideBites = opts.dayDivide === 'forward' && timeIndex === 12;
+
   const diagnostics: ZiweiDiagnostics = {
     wallClock: `${fmtDateTime(localWall)} (${loc.timezone})`,
     utcOffset: formatOffsetString(offsetMinutes, isDst),
@@ -518,6 +528,12 @@ export function calculateZiweiChart(input: ValidatedZiweiInput): ZiweiCalculatio
       beijingSameDay: fmtDate(beijingWallOfInstant),
     },
     timeIndex,
+    ...(dayDivideBites
+      ? {
+          starPlacementLunarDay: lunarConv.lunarDay + 1,
+          dayDivideNote: `The birth's own lunar date is day ${lunarConv.lunarDay} (see \`lunar.day\`), but this birth falls in 晚子时 (23:00-24:00 local true solar time, timeIndex 12) and config.dayDivide is 'forward'. Under that combination, iztro places 紫微 and every star derived from it as if the birth were on lunar day ${lunarConv.lunarDay + 1} instead (see \`starPlacementLunarDay\`) — iztro's own display fields do not reflect that shift, which is exactly why this project never passes them through (see project spec §5 "Z2"). \`lunar.day\` above is, and remains, the birth's true lunar date; only star placement used the following day.`,
+        }
+      : {}),
     shichenAmbiguity,
     convention: {
       yearDivide: opts.yearDivide,
