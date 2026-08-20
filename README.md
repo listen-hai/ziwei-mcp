@@ -57,11 +57,11 @@ Two upstream calendar defects are also worked around: a leap month that does not
 ## 🚀 Quickstart
 
 ```bash
-bunx @lhk714/ziwei-mcp
+bunx @lhk714/ziwei-mcp@latest
 ```
 
 ```bash
-npx -y @lhk714/ziwei-mcp
+npx -y @lhk714/ziwei-mcp@latest
 ```
 
 ---
@@ -73,7 +73,7 @@ npx -y @lhk714/ziwei-mcp
   "mcpServers": {
     "ziwei": {
       "command": "npx",
-      "args": ["-y", "@lhk714/ziwei-mcp"]
+      "args": ["-y", "@lhk714/ziwei-mcp@latest"]
     }
   }
 }
