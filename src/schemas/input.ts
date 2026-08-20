@@ -44,7 +44,6 @@ export const ZIWEI_DEFAULTS = {
   algorithm: 'default',
   astroType: 'heaven',
   fixLeap: true,
-  trueSolar: true,
 } as const;
 
 export const ShichenEnum = z.enum([
@@ -220,7 +219,20 @@ export const ZiweiInputObjectSchema = z.object({
   algorithm: z.enum(['default', 'zhongzhou']).optional().default(ZIWEI_DEFAULTS.algorithm).describe('Star-placement algorithm: default (通行版) or zhongzhou (中州派). Verified exhaustively: zhongzhou does NOT change 四化 — e.g. 庚 stays 禄:太阳 权:武曲 科:太阴 忌:天同 and 壬 stays 禄:天梁 权:紫微 科:左辅 忌:武曲, not the documented 中州派 阳武府同 / 梁紫府武 (天府化科; 中州派 also holds 左辅/右弼 take no 四化 at all, which iztro\'s 壬科:左辅 contradicts). zhongzhou only changes 杂曜 (drops 截路/空亡, adds 截空/劫杀/大耗/龙德, swaps 天伤/天使 for 阴年男/阳年女) and how 命主 is derived (年支 instead of 命宫支). If you need 中州派 四化, supply your own table via `config.mutagens`.'),
   astroType: z.enum(['heaven', 'earth', 'human']).optional().default(ZIWEI_DEFAULTS.astroType).describe('Zhongzhou-school chart type (天盘/地盘/人盘). Effective under either `algorithm` value — verified identical whether `algorithm` is \'default\' or \'zhongzhou\'; NOT limited to zhongzhou despite the name. \'earth\'/\'human\' re-seat 命宫 (to 身宫 / 福德宫) and, with it, 五行局, the twelve palace names, the 14 major stars, 长生十二神, and the decadal (大限) sequence. `earthlyBranchOfBodyPalace`, 天寿, and 命主/身主 keep their 天盘 values — they are NOT re-seated. Under algorithm:\'default\' this would leave 命主 contradicting the returned 命宫, so calculate_ziwei rejects astroType:\'earth\'/\'human\' combined with algorithm:\'default\' (see the error message for the fix); calculate_ziwei_horoscope still accepts it since 命主/身主 never appear in its output.'),
   fixLeap: z.boolean().optional().default(ZIWEI_DEFAULTS.fixLeap).describe('Whether to fix leap-month boundaries at the 15th day (闰月十五日为界修正). Default true (iztro\'s own factory default; 测测 labels this 闰月分界「月中分隔」).'),
-  trueSolar: z.boolean().optional().default(ZIWEI_DEFAULTS.trueSolar).describe('Whether to apply True Solar Time correction (default true)'),
+  // 0.3.0: three-way successor to the old `trueSolar` boolean, mirroring bazi-mcp's
+  // BaziInputSchema exactly (src/schemas/input.ts there, ~L46-58) — see that project's
+  // dual-axis.ts comment for why the boolean was ambiguous: it conflated the longitude
+  // correction (geometrically undisputed, dominant) with the equation of time (±16.5
+  // min, school-dependent). Neither `solarTime` nor `trueSolar` below carries a zod
+  // `.default()` — the default is resolved downstream (src/core/chart.ts) as
+  // `input.solarTime ?? (input.trueSolar === false ? 'off' : 'true')`, which requires
+  // distinguishing "not supplied" from "supplied as the default"; a `.default()` here
+  // would collapse that distinction and break the alias reconciliation.
+  solarTime: z.enum(['true', 'mean', 'off']).optional().describe(
+    'Solar time correction mode (default "true"): "true" applies both the longitude correction and the equation of time (full True Solar Time); "mean" applies only the longitude correction, no equation of time (地方平太阳时); "off" applies neither, using the wall clock as given.'
+  ),
+  /** @deprecated Use `solarTime` instead (true -> "true", false -> "off"). */
+  trueSolar: z.boolean().optional().describe('Deprecated: use `solarTime` instead. Whether to apply True Solar Time correction (default true).'),
 
   // spec §9 / §12: mutagens and brightness are both listed as 透传 (passthrough) —
   // plumbing only, no per-school presets. iztro's own config accepts these keyed by
@@ -246,9 +258,20 @@ export const ZiweiInputObjectSchema = z.object({
 interface BirthInputFields {
   solarDate?: unknown; lunarDate?: unknown; clockTime?: unknown; shichen?: unknown;
   place?: unknown; longitude?: unknown; timezone?: unknown;
+  solarTime?: 'true' | 'mean' | 'off'; trueSolar?: boolean;
 }
 export function withBirthInputRefinements<T extends z.ZodTypeAny>(schema: T) {
   return schema.refine(
+    // Mirrors bazi-mcp's BaziInputSchema refine exactly: only rejects when BOTH are
+    // supplied AND they disagree. `trueSolar` is the deprecated alias (true -> 'true',
+    // false -> 'off'); supplying only one, or supplying both in agreement, is fine.
+    data => {
+      const f = data as BirthInputFields;
+      return f.solarTime === undefined || f.trueSolar === undefined ||
+        f.solarTime === (f.trueSolar ? 'true' : 'off');
+    },
+    { message: 'trueSolar and solarTime disagree; please provide only one (trueSolar is deprecated in favor of solarTime: "true" | "mean" | "off").' }
+  ).refine(
     data => (data as BirthInputFields).solarDate || (data as BirthInputFields).lunarDate,
     { message: 'Must provide either solarDate or lunarDate.' }
   ).refine(

@@ -120,7 +120,7 @@ describe('8.3 Axis B: identical local true solar time yields an identical chart'
       timezone: 'Asia/Shanghai', longitude: 120,
       solarDate: { year: 2000, month: 8, day: 16 }, clockTime: { hour: 12, minute: 0 }, gender: 'male',
     });
-    expect(ref.diagnostics.axisB_localTrueSolarTime).toBe('2000-08-16 11:55');
+    expect(ref.diagnostics.axisB_localSolarTime).toBe('2000-08-16 11:55');
 
     const instants = new Set<string>();
     for (const [timezone, longitude] of meridianZones) {
@@ -129,7 +129,7 @@ describe('8.3 Axis B: identical local true solar time yields an identical chart'
         solarDate: { year: 2000, month: 8, day: 16 }, clockTime: { hour: 12, minute: 0 }, gender: 'male',
       });
       instants.add(res.diagnostics.utcInstant);
-      expect(res.diagnostics.axisB_localTrueSolarTime, timezone).toBe(ref.diagnostics.axisB_localTrueSolarTime);
+      expect(res.diagnostics.axisB_localSolarTime, timezone).toBe(ref.diagnostics.axisB_localSolarTime);
       expect(res.lunar, timezone).toEqual(ref.lunar);
       expect(chartBody(res), timezone).toEqual(chartBody(ref));
     }
@@ -218,7 +218,7 @@ describe('trueSolarNote (0.2.0 spec item 4): True Solar Time disclosure', () => 
       solarDate: { year: 1990, month: 6, day: 15 }, clockTime: { hour: 8, minute: 0 },
       timezone: 'Asia/Shanghai', longitude: 87.6168, gender: 'male',
     });
-    expect(res.diagnostics.axisB_localTrueSolarTime).toBe('1990-06-15 04:50');
+    expect(res.diagnostics.axisB_localSolarTime).toBe('1990-06-15 04:50');
     expect(res.lunar.timeIndex).toBe(2);
     expect(res.diagnostics.trueSolarNote).toBeDefined();
     // Names the true-solar shichen (寅, timeIndex 2) and the uncorrected one (辰, timeIndex 4).
@@ -366,7 +366,7 @@ describe('8.3 Determinism', () => {
     });
     expect(res.diagnostics.convention).toEqual({
       yearDivide: 'lunar_new_year', horoscopeDivide: 'lunar_new_year', ageDivide: 'birthday',
-      dayDivide: 'forward', algorithm: 'zhongzhou', astroType: 'earth', fixLeap: true, trueSolar: false,
+      dayDivide: 'forward', algorithm: 'zhongzhou', astroType: 'earth', fixLeap: true, solarTime: 'off',
     });
     expect(res.diagnostics.yearDivideApplied).toBe('lunar_new_year');
   });

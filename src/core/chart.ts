@@ -11,7 +11,7 @@ import { ValidatedZiweiInput, WallDateTime, ZiweiCalculationResult, ZiweiDiagnos
 import { ZIWEI_DEFAULTS, ZIWEI_YEAR_MAX, yearRangeMessage } from '../schemas/input';
 import { wallToInstant, instantToWall, toUTCWall, tzOffsetMinutes, getStandardOffsetMinutes, formatOffsetString } from './time';
 import { getShichenMidpoint, getShichenSamplePoints } from './shichen';
-import { toTimeIndex, trueSolarTimeIndex, shichenCandidateTimeIndexes, timeIndexToShichen } from './time-index';
+import { resolveSolarTimeIndex, shichenCandidateTimeIndexes, timeIndexToShichen, SolarTimeMode } from './time-index';
 import { lunar2solar, solar2lunar, ganZhiOfLunarYear, lunarYearForGanZhi, assertLeapMonthExists } from './lunar';
 import { resolveLocation, ResolvedLocation } from '../geo/resolver';
 import { trimChart } from './output';
@@ -107,7 +107,7 @@ export interface ResolvedZiweiOptions {
   algorithm: 'default' | 'zhongzhou';
   astroType: 'heaven' | 'earth' | 'human';
   fixLeap: boolean;
-  trueSolar: boolean;
+  solarTime: SolarTimeMode;
 }
 
 /**
@@ -144,9 +144,9 @@ export interface NatalBuild {
   isDst: boolean;
   timeIndex: number;
   /** timeIndex derived from the DST-stripped civil clock alone (no longitude/equation-
-   * of-time correction) — identical to `timeIndex` whenever trueSolar:false. Used to
-   * detect whether True Solar Time correction actually moved this birth across a
-   * timeIndex boundary (see the trueSolarNote diagnostic). */
+   * of-time correction) — identical to `timeIndex` whenever solarTime:'off'. Used to
+   * detect whether the applied correction actually moved this birth across a timeIndex
+   * boundary (see the trueSolarNote diagnostic). */
   uncorrectedTimeIndex: number;
   trueSolarWall: { year: number; month: number; day: number; hour: number; minute: number };
   longitudeCorrectionMinutes: number;
@@ -172,10 +172,20 @@ export function buildNatalAstrolabe(input: ValidatedZiweiInput): NatalBuild {
   // ZiweiInputSchema's `.default(...)` only fires when input goes through
   // ZiweiInputSchema.parse(). Callers that build ValidatedZiweiInput directly get
   // `undefined` for any field they omit, and reading input.* below would silently
-  // treat that as falsy/missing instead of the documented default (e.g. trueSolar
-  // silently disabling True Solar Time). Resolve every defaulted field once, here,
-  // against the same ZIWEI_DEFAULTS the schema itself uses, and read only `opts`
-  // below this point.
+  // treat that as falsy/missing instead of the documented default. Resolve every
+  // defaulted field once, here, against the same ZIWEI_DEFAULTS the schema itself
+  // uses, and read only `opts` below this point.
+  //
+  // solarTime is the three-way successor to the old trueSolar boolean (0.3.0),
+  // mirroring bazi-mcp's dual-axis.ts exactly. Deliberately NOT part of ZIWEI_DEFAULTS
+  // / a zod `.default()`: the schema's `.refine()` (src/schemas/input.ts) needs to tell
+  // "not supplied" apart from "supplied as the default" to reconcile the deprecated
+  // `trueSolar` alias, so the default is resolved here instead — `trueSolar:false` ->
+  // 'off', anything else (including omitted) -> 'true'. This reproduces the exact old
+  // default behavior for both existing values ('true'/'off'), verified byte-identical
+  // in tests/solar_time_reference.test.ts.
+  const solarTimeMode: SolarTimeMode = input.solarTime ?? (input.trueSolar === false ? 'off' : 'true');
+
   const opts: ResolvedZiweiOptions = {
     lunarDateFrame: input.lunarDateFrame ?? ZIWEI_DEFAULTS.lunarDateFrame,
     yearDivide: input.yearDivide ?? ZIWEI_DEFAULTS.yearDivide,
@@ -185,7 +195,7 @@ export function buildNatalAstrolabe(input: ValidatedZiweiInput): NatalBuild {
     algorithm: input.algorithm ?? ZIWEI_DEFAULTS.algorithm,
     astroType: input.astroType ?? ZIWEI_DEFAULTS.astroType,
     fixLeap: input.fixLeap ?? ZIWEI_DEFAULTS.fixLeap,
-    trueSolar: input.trueSolar ?? ZIWEI_DEFAULTS.trueSolar,
+    solarTime: solarTimeMode,
   };
 
   const loc = resolveLocation({ place: input.place, longitude: input.longitude, timezone: input.timezone });
@@ -291,38 +301,31 @@ export function buildNatalAstrolabe(input: ValidatedZiweiInput): NatalBuild {
   const standardOffsetMinutes = getStandardOffsetMinutes(instant, loc.timezone);
   const dstOffsetHours = isDst ? (offsetMinutes - standardOffsetMinutes) / 60 : 0;
 
-  // trueSolar:false still strips DST (matching bazi-mcp: Axis B is always computed from the
-  // *standard* wall clock, with `enableTrueSolarTime` only toggling the longitude/equation-of-
+  // solarTime:'off' still strips DST (matching bazi-mcp: Axis B is always computed from
+  // the *standard* wall clock, with `solarTime` only toggling the longitude/equation-of-
   // time step on top of that) — it does not mean "use the raw civil clock unmodified".
   const standardWall = toUTCWall(instant + standardOffsetMinutes * 60000);
 
-  // Port of bazi-mcp's dual-axis.ts fix: the longitude/equation-of-time correction is a pure
-  // function of the civil wall clock + longitude, so compute it UNCONDITIONALLY — even when
-  // trueSolar is off — instead of hard-reporting `0`. trueSolar only toggles whether the
-  // correction is actually APPLIED to timeIndex/trueSolarWall below; `longitudeCorrectionMinutes`/
-  // `equationOfTimeMinutes` (read off `solarIdx` by the caller, in both branches) always carry the
-  // real computed value regardless, so a caller is never told a ~176-minute correction was `0`
-  // just because it wasn't applied. `convention.trueSolar` (diagnostics, below) is what tells the
-  // caller whether it was applied — these two fields never claimed to mean "applied" on their own,
-  // so no field rename is needed to keep that distinction honest.
-  const fullSolarIdx = trueSolarTimeIndex({
-    year: localWall.year,
-    month: localWall.month,
-    day: localWall.day,
-    hour: localWall.hour,
-    minute: localWall.minute,
+  // Port of bazi-mcp's dual-axis.ts fix, now generalized to the three-way `solarTime`
+  // mode (0.3.0): `resolveSolarTimeIndex` computes the full True Solar Time correction
+  // (longitude + equation of time) and the longitude-only "local mean solar time"
+  // correction UNCONDITIONALLY — even when neither is applied to the chart — instead of
+  // hard-reporting `0`. `solarTime` only toggles which one (if either) is actually
+  // APPLIED to timeIndex/trueSolarWall (`solarResolution.applied`, aliased to `solarIdx`
+  // below); `longitudeCorrectionMinutes`/`equationOfTimeMinutes` (read off `solarIdx` by
+  // the caller) always carry the real computed value regardless of mode, so a caller is
+  // never told a ~176-minute correction was `0` just because it wasn't applied.
+  // `convention.solarTime` (diagnostics, below) is what tells the caller which
+  // correction(s), if any, were actually applied.
+  const solarResolution = resolveSolarTimeIndex({
+    mode: opts.solarTime,
+    actualWall: localWall,
+    standardWall,
     standardOffsetHours: standardOffsetMinutes / 60,
     dstOffsetHours,
     longitude: loc.longitude,
   });
-  const solarIdx = opts.trueSolar
-    ? fullSolarIdx
-    : {
-        timeIndex: toTimeIndex(standardWall.hour, standardWall.minute),
-        trueSolarWall: standardWall,
-        longitudeCorrectionMinutes: fullSolarIdx.longitudeCorrectionMinutes,
-        equationOfTimeMinutes: fullSolarIdx.equationOfTimeMinutes,
-      };
+  const solarIdx = solarResolution.applied;
 
   if (Math.abs(solarIdx.longitudeCorrectionMinutes) > 240) {
     warnings.push(
@@ -330,12 +333,27 @@ export function buildNatalAstrolabe(input: ValidatedZiweiInput): NatalBuild {
     );
   }
 
-  // bazi-mcp's dual-axis.ts threshold (30 min): trueSolar:false discards this correction
-  // entirely rather than reporting a lie about it (see comment above) — warn when the
-  // discarded amount is large enough to plausibly move the 时辰 (timeIndex) boundary.
-  if (!opts.trueSolar && Math.abs(fullSolarIdx.longitudeCorrectionMinutes) > 30) {
+  // bazi-mcp's dual-axis.ts threshold (30 min), unchanged wording/behavior from pre-0.3.0
+  // trueSolar:false (regression guard: tests/solar_time_reference.test.ts pins this byte-
+  // identical): solarTime:'off' discards the FULL correction (longitude + equation of
+  // time) entirely rather than reporting a lie about it (see comment above) — warn when
+  // the discarded longitude component alone is large enough to plausibly move the 时辰
+  // (timeIndex) boundary.
+  if (opts.solarTime === 'off' && Math.abs(solarResolution.full.longitudeCorrectionMinutes) > 30) {
     warnings.push(
-      `trueSolar is false: a longitude correction of ${fullSolarIdx.longitudeCorrectionMinutes.toFixed(1)} minutes was computed but NOT applied; the timeIndex (时辰) and lunar date placement may differ from a true-solar-time chart.`
+      `trueSolar is false: a longitude correction of ${solarResolution.full.longitudeCorrectionMinutes.toFixed(1)} minutes was computed but NOT applied; the timeIndex (时辰) and lunar date placement may differ from a true-solar-time chart.`
+    );
+  }
+
+  // 0.3.0 counterpart for solarTime:'mean': unlike 'off', 'mean' DOES apply the longitude
+  // correction — only the equation of time (max ~16.5 min) is discarded, so a magnitude
+  // threshold like the 'off' warning's (>30 min) would almost never fire. Precise
+  // condition instead: warn exactly when that discarded equation-of-time margin is
+  // enough, on its own, to move the timeIndex relative to what solarTime:'true' (the
+  // full correction) would have produced.
+  if (opts.solarTime === 'mean' && solarResolution.mean.timeIndex !== solarResolution.full.timeIndex) {
+    warnings.push(
+      `solarTime is "mean": the longitude correction (${solarResolution.full.longitudeCorrectionMinutes.toFixed(1)} minutes) was applied, but the equation of time (${solarResolution.full.equationOfTimeMinutes.toFixed(1)} minutes) was NOT applied — that alone moved this birth across a timeIndex (时辰) boundary relative to the full True Solar Time correction (solarTime:'true' would give timeIndex ${solarResolution.full.timeIndex} here, not ${solarResolution.mean.timeIndex}).`
     );
   }
 
@@ -359,7 +377,7 @@ export function buildNatalAstrolabe(input: ValidatedZiweiInput): NatalBuild {
       tz: loc.timezone,
       longitude: loc.longitude,
       dstFold: input.dstFold,
-      trueSolar: opts.trueSolar,
+      solarTimeMode: opts.solarTime,
     });
     if (candidates.length > 1) {
       shichenAmbiguity = { isAmbiguous: true, candidateTimeIndexes: candidates };
@@ -379,7 +397,7 @@ export function buildNatalAstrolabe(input: ValidatedZiweiInput): NatalBuild {
   }
 
   const { timeIndex, trueSolarWall } = solarIdx;
-  const uncorrectedTimeIndex = toTimeIndex(standardWall.hour, standardWall.minute);
+  const uncorrectedTimeIndex = solarResolution.rawTimeIndex;
   const lunarConv = solar2lunar(fmtDate(trueSolarWall));
 
   // Axis A: year ganzhi via the true UTC instant's Beijing wall clock — exactly like
@@ -542,17 +560,17 @@ export function calculateZiweiChart(input: ValidatedZiweiInput): ZiweiCalculatio
   // would be boilerplate, not signal.
   const dayDivideBites = opts.dayDivide === 'forward' && timeIndex === 12;
 
-  // Project owner's ruling (0.2.0, spec item 4): True Solar Time stays on by default,
-  // but must disclose itself — the classical caution 「不准但用三时断，时有差误不可凭」
-  // applies whenever the correction is large enough to matter. The high-value case is
-  // specifically a 时辰 (timeIndex) boundary crossing: that's exactly when this chart
-  // can disagree with a tool that reads the plain civil clock (e.g. a Beijing-time
-  // cross-check). `uncorrectedTimeIndex` already equals `timeIndex` whenever
-  // trueSolar:false (both are then derived from the same DST-stripped standard wall
-  // clock — see buildNatalAstrolabe), so this condition is naturally false in that
-  // case without an extra opts.trueSolar check. Deliberately silent when the
-  // correction doesn't cross a boundary — firing on every chart would be boilerplate,
-  // not signal, and would get ignored exactly like boilerplate does.
+  // Project owner's ruling (0.2.0, spec item 4; adapted for the 0.3.0 three-way
+  // `solarTime` mode): the applied correction must disclose itself — the classical
+  // caution 「不准但用三时断，时有差误不可凭」 applies whenever the correction is large
+  // enough to matter. The high-value case is specifically a 时辰 (timeIndex) boundary
+  // crossing: that's exactly when this chart can disagree with a tool that reads the
+  // plain civil clock (e.g. a Beijing-time cross-check). `uncorrectedTimeIndex` already
+  // equals `timeIndex` whenever solarTime:'off' (both are then derived from the same
+  // DST-stripped standard wall clock — see buildNatalAstrolabe), so this condition is
+  // naturally false in that case without an extra opts.solarTime check. Deliberately
+  // silent when the correction doesn't cross a boundary — firing on every chart would
+  // be boilerplate, not signal, and would get ignored exactly like boilerplate does.
   const trueSolarCrossedBoundary = timeIndex !== uncorrectedTimeIndex;
   const totalCorrectionMinutes = build.longitudeCorrectionMinutes + build.equationOfTimeMinutes;
   const shichenLabel = (ti: number) => `${timeIndexToShichen(ti)}${ti === 0 ? ' 早子时' : ti === 12 ? ' 晚子时' : ''} (timeIndex ${ti})`;
@@ -562,7 +580,7 @@ export function calculateZiweiChart(input: ValidatedZiweiInput): ZiweiCalculatio
     utcOffset: formatOffsetString(offsetMinutes, isDst),
     utcInstant: new Date(instant).toISOString(),
     axisA_instant_forYearPillar: `${fmtDateTime(build.beijingWallForA)} (UTC+8)`,
-    axisB_localTrueSolarTime: fmtDateTime(trueSolarWall),
+    axisB_localSolarTime: fmtDateTime(trueSolarWall),
     longitudeCorrectionMinutes: Number(build.longitudeCorrectionMinutes.toFixed(2)),
     equationOfTimeMinutes: Number(build.equationOfTimeMinutes.toFixed(2)),
     yearGanZhi,
@@ -583,7 +601,16 @@ export function calculateZiweiChart(input: ValidatedZiweiInput): ZiweiCalculatio
       : {}),
     ...(trueSolarCrossedBoundary
       ? {
-          trueSolarNote: `True Solar Time correction moved this birth across a 时辰 boundary: local true solar time (Axis B, ${fmtDateTime(trueSolarWall)}) falls in ${shichenLabel(timeIndex)}, while the uncorrected civil clock (DST-stripped only, no longitude/equation-of-time correction) would have fallen in ${shichenLabel(uncorrectedTimeIndex)} — a correction of ${totalCorrectionMinutes.toFixed(1)} minutes (${build.longitudeCorrectionMinutes.toFixed(1)} longitude + ${build.equationOfTimeMinutes.toFixed(1)} equation of time). This is exactly the situation where this chart can disagree with a tool that reads the plain civil clock (e.g. a Beijing-time cross-check) — the soul palace, body palace and several star placements depend on timeIndex. True Solar Time is an astronomical correction, not certainty about which 时辰 governs a birth this close to the boundary: 「不准但用三时断，时有差误不可凭」 — treat a chart this close to a 时辰 boundary with appropriate caution, and double-check the exact birth minute if possible.`,
+          // 'off' can never reach here (trueSolarCrossedBoundary is false by
+          // construction under 'off' — see the comment above), so only 'true' and
+          // 'mean' need their own wording. 'true' keeps the exact pre-0.3.0 text
+          // (regression guard: tests/solar_time_reference.test.ts / invariant.test.ts
+          // pin this byte-identical). 'mean' must not call itself "True Solar Time" or
+          // break the correction into "longitude + equation of time" — only longitude
+          // was actually applied.
+          trueSolarNote: opts.solarTime === 'mean'
+            ? `Local mean solar time (地方平太阳时 — solarTime:'mean' applies the longitude correction only, NOT the equation of time) moved this birth across a 时辰 boundary: local mean solar time (Axis B, ${fmtDateTime(trueSolarWall)}) falls in ${shichenLabel(timeIndex)}, while the uncorrected civil clock (DST-stripped only, no correction at all) would have fallen in ${shichenLabel(uncorrectedTimeIndex)} — a longitude correction of ${build.longitudeCorrectionMinutes.toFixed(1)} minutes (the equation of time, ${build.equationOfTimeMinutes.toFixed(1)} minutes, was computed but NOT applied under solarTime:'mean'). This is exactly the situation where this chart can disagree with a tool that reads the plain civil clock (e.g. a Beijing-time cross-check) — the soul palace, body palace and several star placements depend on timeIndex. Local mean solar time is still an astronomical correction, not certainty about which 时辰 governs a birth this close to the boundary: 「不准但用三时断，时有差误不可凭」 — treat a chart this close to a 时辰 boundary with appropriate caution, and double-check the exact birth minute if possible.`
+            : `True Solar Time correction moved this birth across a 时辰 boundary: local true solar time (Axis B, ${fmtDateTime(trueSolarWall)}) falls in ${shichenLabel(timeIndex)}, while the uncorrected civil clock (DST-stripped only, no longitude/equation-of-time correction) would have fallen in ${shichenLabel(uncorrectedTimeIndex)} — a correction of ${totalCorrectionMinutes.toFixed(1)} minutes (${build.longitudeCorrectionMinutes.toFixed(1)} longitude + ${build.equationOfTimeMinutes.toFixed(1)} equation of time). This is exactly the situation where this chart can disagree with a tool that reads the plain civil clock (e.g. a Beijing-time cross-check) — the soul palace, body palace and several star placements depend on timeIndex. True Solar Time is an astronomical correction, not certainty about which 时辰 governs a birth this close to the boundary: 「不准但用三时断，时有差误不可凭」 — treat a chart this close to a 时辰 boundary with appropriate caution, and double-check the exact birth minute if possible.`,
         }
       : {}),
     shichenAmbiguity,
@@ -595,7 +622,7 @@ export function calculateZiweiChart(input: ValidatedZiweiInput): ZiweiCalculatio
       algorithm: opts.algorithm,
       astroType: opts.astroType,
       fixLeap: opts.fixLeap,
-      trueSolar: opts.trueSolar,
+      solarTime: opts.solarTime,
     },
     locationSource: loc.locationSource,
     warnings,
@@ -604,7 +631,9 @@ export function calculateZiweiChart(input: ValidatedZiweiInput): ZiweiCalculatio
       lunarLite: lunarLitePkg.version,
       baziEngine: baziEnginePkg.version,
       trueSolarTimeEngine: trueSolarTimePkg.version,
-      schemaVersion: '1.0.0',
+      // 0.3.0: diagnostics wire shape changed (axisB_localTrueSolarTime renamed to
+      // axisB_localSolarTime; convention.trueSolar boolean replaced by convention.solarTime).
+      schemaVersion: '2.0.0',
     },
   };
 

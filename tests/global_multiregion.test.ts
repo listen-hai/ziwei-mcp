@@ -137,7 +137,7 @@ describe('Global multi-region: worldwide UTC offsets and DST', () => {
       solarDate: { year: 1922, month: 11, day: 9 }, clockTime: { hour: 23, minute: 0 }, gender: 'male',
     });
     expect(moscow.diagnostics.utcOffset).toBe('+02:00');
-    expect(moscow.diagnostics.axisB_localTrueSolarTime).toBe('1922-11-09 23:46');
+    expect(moscow.diagnostics.axisB_localSolarTime).toBe('1922-11-09 23:46');
     expect(moscow.lunar.timeIndex).toBe(12); // 晚子时
     expect(moscow.lunar.shichen).toBe('子');
     expect(moscow.diagnostics.yearGanZhi).toBe('壬戌');
@@ -153,7 +153,7 @@ describe('Global multi-region: worldwide UTC offsets and DST', () => {
       solarDate: { year: 1944, month: 2, day: 4 }, clockTime: { hour: 4, minute: 9 }, yearDivide: 'lichun', gender: 'male',
     });
     expect(phoenix.diagnostics.utcOffset).toBe('-07:00');
-    expect(phoenix.diagnostics.axisB_localTrueSolarTime).toBe('1944-02-04 03:26');
+    expect(phoenix.diagnostics.axisB_localSolarTime).toBe('1944-02-04 03:26');
     expect(phoenix.lunar.shichen).toBe('寅');
     // 立春 1944 was 1944-02-05, so this birth is still in 癸未.
     expect(phoenix.diagnostics.yearGanZhi).toBe('癸未');

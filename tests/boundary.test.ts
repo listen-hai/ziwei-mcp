@@ -161,7 +161,7 @@ describe('8.2 DST gaps, folds and dstFold', () => {
       day: 28,
       tz: 'America/Chicago',
       longitude: -87.6,
-      trueSolar: true,
+      solarTimeMode: 'true' as const,
     };
     const noFold = shichenCandidateTimeIndexes(params);
     const fold0 = shichenCandidateTimeIndexes({ ...params, dstFold: 0 });

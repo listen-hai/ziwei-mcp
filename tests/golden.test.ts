@@ -102,7 +102,7 @@ describe('8.2 Golden cases G1-G5 (ported from bazi-mcp, rewritten in Ziwei terms
     });
     expect(res.diagnostics.yearGanZhi).toBe('庚午');
     expect(res.diagnostics.utcOffset).toContain('DST in effect');
-    expect(res.diagnostics.axisB_localTrueSolarTime).toBe('1990-06-15 18:49');
+    expect(res.diagnostics.axisB_localSolarTime).toBe('1990-06-15 18:49');
     expect(res.lunar).toMatchObject({ year: 1990, month: 5, day: 23, timeIndex: 9, shichen: '酉' });
     expect(res.soulPalace).toEqual({ branch: '酉', stem: '乙', name: '命宫' });
     expect(res.bodyPalace.branch).toBe('卯');
@@ -125,7 +125,7 @@ describe('8.2 Golden cases G1-G5 (ported from bazi-mcp, rewritten in Ziwei terms
     expect(res.diagnostics.yearGanZhi).toBe('庚午');
     expect(res.diagnostics.utcOffset).toContain('+09:00');
     expect(res.diagnostics.utcOffset).toContain('DST in effect');
-    expect(res.diagnostics.axisB_localTrueSolarTime).toBe('1990-06-15 04:50');
+    expect(res.diagnostics.axisB_localSolarTime).toBe('1990-06-15 04:50');
     expect(res.diagnostics.longitudeCorrectionMinutes).toBeLessThan(-125);
     expect(res.lunar).toMatchObject({ year: 1990, month: 5, day: 23, timeIndex: 2, shichen: '寅' });
     expect(res.soulPalace).toEqual({ branch: '辰', stem: '庚', name: '命宫' });
@@ -213,9 +213,9 @@ describe('Regression: zod defaults must not depend on who built the input', () =
     const parsed = calculateZiweiChart(ZiweiInputSchema.parse(raw) as ValidatedZiweiInput);
 
     for (const res of [direct, parsed]) {
-      expect(res.diagnostics.convention.trueSolar).toBe(true);
+      expect(res.diagnostics.convention.solarTime).toBe('true');
       expect(res.diagnostics.longitudeCorrectionMinutes).toBe(-136);
-      expect(res.diagnostics.axisB_localTrueSolarTime).toBe('2000-08-16 17:39');
+      expect(res.diagnostics.axisB_localSolarTime).toBe('2000-08-16 17:39');
       expect(res.lunar.timeIndex).toBe(9);
       expect(res.lunar.shichen).toBe('酉');
     }
@@ -228,9 +228,9 @@ describe('Regression: zod defaults must not depend on who built the input', () =
     // Fix: trueSolar:false must not silently report the discarded correction as 0 — the
     // -136 min value is the same physical correction independently asserted above (same
     // longitude/timezone/date, trueSolar:true), just not applied to the chart here.
-    // `convention.trueSolar` (asserted below) is what actually says "not applied".
+    // `convention.solarTime` (asserted below) is what actually says "not applied".
     expect(off.diagnostics.longitudeCorrectionMinutes).toBe(-136);
-    expect(off.diagnostics.convention.trueSolar).toBe(false);
+    expect(off.diagnostics.convention.solarTime).toBe('off');
     expect(off.diagnostics.warnings).toContain(
       'trueSolar is false: a longitude correction of -136.0 minutes was computed but NOT applied; the timeIndex (时辰) and lunar date placement may differ from a true-solar-time chart.'
     );

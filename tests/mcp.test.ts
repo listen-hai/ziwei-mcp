@@ -38,7 +38,7 @@ describe('MCP tools/list', () => {
     expect(Object.keys(ziwei.inputSchema.properties).sort()).toEqual([
       'algorithm', 'ageDivide', 'astroType', 'brightness', 'clockTime', 'dayDivide', 'dstFold', 'fixLeap',
       'gender', 'horoscopeDivide', 'longitude', 'lunarDate', 'lunarDateFrame', 'mutagens', 'place',
-      'shichen', 'solarDate', 'timezone', 'trueSolar', 'yearDivide',
+      'shichen', 'solarDate', 'solarTime', 'timezone', 'trueSolar', 'yearDivide',
     ].sort());
   });
 
@@ -51,7 +51,7 @@ describe('MCP tools/list', () => {
     expect(Object.keys(horoscope.inputSchema.properties).sort()).toEqual([
       'algorithm', 'ageDivide', 'astroType', 'brightness', 'clockTime', 'dayDivide', 'dstFold', 'fixLeap',
       'gender', 'horoscopeDivide', 'longitude', 'lunarDate', 'lunarDateFrame', 'mutagens', 'place',
-      'shichen', 'solarDate', 'target', 'timezone', 'trueSolar', 'yearDivide',
+      'shichen', 'solarDate', 'solarTime', 'target', 'timezone', 'trueSolar', 'yearDivide',
     ].sort());
     expect(horoscope.inputSchema.properties.target.required).toEqual(['solarDate', 'clockTime']);
   });
@@ -101,7 +101,7 @@ describe('MCP tools/call happy paths', () => {
     const chart = JSON.parse(res.content[0].text);
     expect(chart.diagnostics.convention).toEqual({
       yearDivide: 'lunar_new_year', horoscopeDivide: 'lunar_new_year', ageDivide: 'normal', dayDivide: 'forward',
-      algorithm: 'default', astroType: 'heaven', fixLeap: true, trueSolar: true,
+      algorithm: 'default', astroType: 'heaven', fixLeap: true, solarTime: 'true',
     });
   });
 

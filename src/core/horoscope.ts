@@ -16,7 +16,7 @@ import {
 import { ZIWEI_YEAR_MAX, yearRangeMessage } from '../schemas/input';
 import { buildNatalAstrolabe, resetIztroConfig, fmtDate, fmtDateTime, NatalBuild } from './chart';
 import { wallToInstant, instantToWall, toUTCWall, tzOffsetMinutes, getStandardOffsetMinutes } from './time';
-import { toTimeIndex, trueSolarTimeIndex } from './time-index';
+import { resolveSolarTimeIndex } from './time-index';
 import { lunar2solar, solar2lunar, ganZhiOfLunarYear, lunarYearForGanZhi } from './lunar';
 
 /**
@@ -137,7 +137,9 @@ export function calculateZiweiHoroscope(input: ValidatedZiweiHoroscopeInput): Zi
   }
 
   // ── Axis B: target local true solar time -> raw timeIndex (0-12), exactly like the
-  // natal path (trueSolar toggle honored the same way).
+  // natal path (solarTime mode honored the same way — resolveSolarTimeIndex is the same
+  // single implementation chart.ts's buildNatalAstrolabe uses, so 'mean' can't drift or
+  // double-correct between the two call sites).
   const targetOffsetMinutes = tzOffsetMinutes(targetInstant, natal.loc.timezone);
   const targetStandardOffsetMinutes = getStandardOffsetMinutes(targetInstant, natal.loc.timezone);
   const targetIsDst = targetOffsetMinutes > targetStandardOffsetMinutes;
@@ -147,36 +149,35 @@ export function calculateZiweiHoroscope(input: ValidatedZiweiHoroscopeInput): Zi
 
   // Same defect and same fix as chart.ts's buildNatalAstrolabe (fix 1, see its comment):
   // compute the correction unconditionally so it's available to report/warn on, even
-  // though trueSolar only applies it to timeIndex/trueSolarWall below. Unlike the natal
+  // though solarTime only applies it to timeIndex/trueSolarWall below. Unlike the natal
   // path, ZiweiHoroscopeDiagnostics has no longitudeCorrectionMinutes/equationOfTimeMinutes
-  // fields to begin with (never did, in either trueSolar mode) — targetSolarIdx.timeIndex/
+  // fields to begin with (never did, in any solarTime mode) — targetSolarIdx.timeIndex/
   // trueSolarWall are the only fields ever read off it elsewhere in this function — so
   // there is no pre-existing "reports 0 instead of the truth" lie to fix for those two
   // fields specifically. What IS structurally identical to fix 1's real defect: a large
   // discarded correction can silently move targetTimeIndex across a 时辰 boundary with no
-  // signal at all. Port the warning for that, without inventing new diagnostics fields
+  // signal at all. Port the warning(s) for that, without inventing new diagnostics fields
   // this type never had.
-  const targetFullSolarIdx = trueSolarTimeIndex({
-    year: targetLocalWall.year,
-    month: targetLocalWall.month,
-    day: targetLocalWall.day,
-    hour: targetLocalWall.hour,
-    minute: targetLocalWall.minute,
+  const targetSolarResolution = resolveSolarTimeIndex({
+    mode: natal.opts.solarTime,
+    actualWall: targetLocalWall,
+    standardWall: targetStandardWall,
     standardOffsetHours: targetStandardOffsetMinutes / 60,
     dstOffsetHours: targetDstOffsetHours,
     longitude: natal.loc.longitude,
   });
-  const targetSolarIdx = natal.opts.trueSolar
-    ? targetFullSolarIdx
-    : {
-        timeIndex: toTimeIndex(targetStandardWall.hour, targetStandardWall.minute),
-        trueSolarWall: targetStandardWall,
-        longitudeCorrectionMinutes: targetFullSolarIdx.longitudeCorrectionMinutes,
-        equationOfTimeMinutes: targetFullSolarIdx.equationOfTimeMinutes,
-      };
-  if (!natal.opts.trueSolar && Math.abs(targetFullSolarIdx.longitudeCorrectionMinutes) > 30) {
+  const targetSolarIdx = targetSolarResolution.applied;
+  // 'off': unchanged wording/threshold from pre-0.3.0 trueSolar:false (regression guard).
+  if (natal.opts.solarTime === 'off' && Math.abs(targetSolarResolution.full.longitudeCorrectionMinutes) > 30) {
     warnings.push(
-      `trueSolar is false: a longitude correction of ${targetFullSolarIdx.longitudeCorrectionMinutes.toFixed(1)} minutes was computed but NOT applied to the target instant; targetTimeIndex (时辰) and the target lunar date may differ from a true-solar-time chart.`
+      `trueSolar is false: a longitude correction of ${targetSolarResolution.full.longitudeCorrectionMinutes.toFixed(1)} minutes was computed but NOT applied to the target instant; targetTimeIndex (时辰) and the target lunar date may differ from a true-solar-time chart.`
+    );
+  }
+  // 'mean': same precise (not magnitude-threshold) condition as chart.ts's counterpart —
+  // fires when the discarded equation of time alone would have moved targetTimeIndex.
+  if (natal.opts.solarTime === 'mean' && targetSolarResolution.mean.timeIndex !== targetSolarResolution.full.timeIndex) {
+    warnings.push(
+      `solarTime is "mean": the longitude correction (${targetSolarResolution.full.longitudeCorrectionMinutes.toFixed(1)} minutes) was applied to the target instant, but the equation of time (${targetSolarResolution.full.equationOfTimeMinutes.toFixed(1)} minutes) was NOT applied — that alone moved targetTimeIndex (时辰) across a boundary relative to the full True Solar Time correction (solarTime:'true' would give timeIndex ${targetSolarResolution.full.timeIndex} here, not ${targetSolarResolution.mean.timeIndex}).`
     );
   }
 
@@ -461,7 +462,7 @@ export function calculateZiweiHoroscope(input: ValidatedZiweiHoroscopeInput): Zi
     targetWallClock: `${fmtDateTime(targetLocalWall)} (${natal.loc.timezone})`,
     targetUtcInstant: new Date(targetInstant).toISOString(),
     axisA_instant_forYearlyGanZhi: `${fmtDateTime(beijingWallForTargetA)} (UTC+8)`,
-    axisB_localTrueSolarTime: fmtDateTime(targetSolarIdx.trueSolarWall),
+    axisB_localSolarTime: fmtDateTime(targetSolarIdx.trueSolarWall),
     targetLunar: {
       year: targetLunarConv.lunarYear,
       month: targetLunarConv.lunarMonth,
@@ -504,7 +505,7 @@ export function calculateZiweiHoroscope(input: ValidatedZiweiHoroscopeInput): Zi
       algorithm: natal.opts.algorithm,
       astroType: natal.opts.astroType,
       fixLeap: natal.opts.fixLeap,
-      trueSolar: natal.opts.trueSolar,
+      solarTime: natal.opts.solarTime,
     },
     locationSource: natal.loc.locationSource,
     warnings,
@@ -513,7 +514,9 @@ export function calculateZiweiHoroscope(input: ValidatedZiweiHoroscopeInput): Zi
       lunarLite: lunarLitePkg.version,
       baziEngine: baziEnginePkg.version,
       trueSolarTimeEngine: trueSolarTimePkg.version,
-      schemaVersion: '1.0.0',
+      // 0.3.0: diagnostics wire shape changed (axisB_localTrueSolarTime renamed to
+      // axisB_localSolarTime; convention.trueSolar boolean replaced by convention.solarTime).
+      schemaVersion: '2.0.0',
     },
   };
 

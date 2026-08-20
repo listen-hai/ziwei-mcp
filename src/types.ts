@@ -71,7 +71,12 @@ export interface ZiweiDiagnostics {
   utcOffset: string;
   utcInstant: string;
   axisA_instant_forYearPillar: string;
-  axisB_localTrueSolarTime: string;
+  /** The local solar time actually fed to Axis B's timeIndex/lunar-date computation —
+   * NOT always full True Solar Time. Renamed from `axisB_localTrueSolarTime` (0.3.0):
+   * that name asserted a true-solar basis that 'mean' and 'off' don't use. Reflects
+   * longitude+equation-of-time under solarTime:'true', longitude only under 'mean', and
+   * the plain DST-stripped wall clock under 'off' — see `convention.solarTime`. */
+  axisB_localSolarTime: string;
   longitudeCorrectionMinutes: number;
   equationOfTimeMinutes: number;
   yearGanZhi: string;
@@ -97,14 +102,19 @@ export interface ZiweiDiagnostics {
    * Absent for every other combination of dayDivide/timeIndex, where the two never
    * diverge. */
   dayDivideNote?: string;
-  /** True Solar Time disclosure (project owner's ruling, spec item 4): present only
-   * when the correction actually moved this birth across a 时辰 (timeIndex) boundary
-   * relative to the uncorrected civil clock — the one case where this chart can
-   * disagree with a tool that uses the plain civil clock (e.g. a Beijing-time
-   * cross-check). Absent otherwise (including whenever trueSolar:false, since then
-   * the corrected and uncorrected timeIndex are identical by construction) — this is
-   * deliberately not boilerplate that fires on every chart. Carries the classical
-   * caution 「不准但用三时断，时有差误不可凭」 per the project owner. */
+  /** Solar-time disclosure (project owner's ruling, spec item 4; adapted for the 0.3.0
+   * three-way `solarTime` mode): present only when the correction actually APPLIED under
+   * this mode moved this birth across a 时辰 (timeIndex) boundary relative to the
+   * uncorrected civil clock — the one case where this chart can disagree with a tool
+   * that uses the plain civil clock (e.g. a Beijing-time cross-check). Under 'true' this
+   * is the full True Solar Time correction (longitude + equation of time), worded
+   * exactly as before 0.3.0. Under 'mean' only the longitude correction is applied — the
+   * wording says so explicitly and does NOT call it "True Solar Time" or break the
+   * correction into "longitude + equation of time" components, since only the longitude
+   * component was actually used. Absent under 'off' (the applied and uncorrected
+   * timeIndex are identical there by construction) — deliberately not boilerplate that
+   * fires on every chart. Carries the classical caution 「不准但用三时断，时有差误不可凭」
+   * per the project owner. */
   trueSolarNote?: string;
   shichenAmbiguity?: {
     isAmbiguous: boolean;
@@ -118,7 +128,11 @@ export interface ZiweiDiagnostics {
     algorithm: 'default' | 'zhongzhou';
     astroType: 'heaven' | 'earth' | 'human';
     fixLeap: boolean;
-    trueSolar: boolean;
+    /** Resolved solar time correction mode: 'true' (longitude + equation of time, the
+     * default), 'mean' (longitude only, 地方平太阳时), or 'off' (neither). 0.3.0
+     * successor to the boolean `trueSolar` field (which could not express 'mean'); see
+     * `ZiweiInput.solarTime`. */
+    solarTime: 'true' | 'mean' | 'off';
   };
   locationSource: 'resolved' | 'caller_supplied' | 'mixed';
   warnings: string[];
@@ -174,7 +188,9 @@ export interface ZiweiHoroscopeDiagnostics {
   targetWallClock: string;
   targetUtcInstant: string;
   axisA_instant_forYearlyGanZhi: string;
-  axisB_localTrueSolarTime: string;
+  /** See ZiweiDiagnostics.axisB_localSolarTime's doc comment — same 0.3.0 rename, same
+   * meaning, applied to the target instant instead of the birth instant. */
+  axisB_localSolarTime: string;
   /** The target's lunar date, computed by this service (never iztro's own `lunarDate`/
    * `solarDate` — spec: "Never pass through iztro's lunarDate/solarDate for the
    * target — compute them"). Reflects the late-Zi-normalized date when
@@ -213,7 +229,7 @@ export interface ZiweiHoroscopeDiagnostics {
     algorithm: 'default' | 'zhongzhou';
     astroType: 'heaven' | 'earth' | 'human';
     fixLeap: boolean;
-    trueSolar: boolean;
+    solarTime: 'true' | 'mean' | 'off';
   };
   locationSource: 'resolved' | 'caller_supplied' | 'mixed';
   warnings: string[];

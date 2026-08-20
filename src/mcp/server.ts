@@ -237,9 +237,14 @@ export function createZiweiMcpServer(): Server {
             type: 'boolean',
             description: 'Whether to fix leap-month boundaries at the 15th day (闰月十五日为界修正). Default true (iztro\'s own factory default).',
           },
+          solarTime: {
+            type: 'string',
+            enum: ['true', 'mean', 'off'],
+            description: 'Solar time correction mode (default "true"): "true" applies both the longitude correction and the equation of time (full True Solar Time); "mean" applies only the longitude correction, no equation of time (地方平太阳时); "off" applies neither, using the wall clock as given.',
+          },
           trueSolar: {
             type: 'boolean',
-            description: 'Whether to apply True Solar Time correction (default: true)',
+            description: 'Deprecated: use `solarTime` instead (true -> "true", false -> "off"). Whether to apply True Solar Time correction (default: true).',
           },
           mutagens: {
             type: 'object',

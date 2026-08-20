@@ -1018,7 +1018,7 @@ describe('运限 audit: the target goes through the same time layer as the birth
 
     for (const s of SCOPES) expect(la[s]).toEqual(utc[s]);
     expect(la.diagnostics.targetUtcInstant).toBe(utc.diagnostics.targetUtcInstant);
-    expect(la.diagnostics.axisB_localTrueSolarTime).toBe(utc.diagnostics.axisB_localTrueSolarTime);
+    expect(la.diagnostics.axisB_localSolarTime).toBe(utc.diagnostics.axisB_localSolarTime);
     expect(la.diagnostics.targetTimeIndex).toBe(utc.diagnostics.targetTimeIndex);
     // The wall-clock strings, on the other hand, must NOT be equal — otherwise the two
     // inputs were not actually different.
@@ -1034,14 +1034,14 @@ describe('运限 audit: the target goes through the same time layer as the birth
 
     expect(corrected.diagnostics.targetTimeIndex).toBe(5);
     expect(corrected.hourly.branch).toBe('巳');
-    expect(corrected.diagnostics.axisB_localTrueSolarTime).toStartWith('2025-06-15 10:');
+    expect(corrected.diagnostics.axisB_localSolarTime).toStartWith('2025-06-15 10:');
     expect(raw.diagnostics.targetTimeIndex).toBe(6);
     expect(raw.hourly.branch).toBe('午');
-    expect(raw.diagnostics.axisB_localTrueSolarTime).toBe('2025-06-15 12:30');
+    expect(raw.diagnostics.axisB_localSolarTime).toBe('2025-06-15 12:30');
     // Same instant either way — only the interpretation of it changed.
     expect(corrected.diagnostics.targetUtcInstant).toBe(raw.diagnostics.targetUtcInstant);
-    expect(corrected.diagnostics.convention.trueSolar).toBe(true);
-    expect(raw.diagnostics.convention.trueSolar).toBe(false);
+    expect(corrected.diagnostics.convention.solarTime).toBe('true');
+    expect(raw.diagnostics.convention.solarTime).toBe('off');
   });
 
   it('honours dstFold on an ambiguous target instant in a DST fall-back overlap', () => {
@@ -1190,10 +1190,10 @@ describe('运限 audit: output trimming (spec §7 discipline) — nothing from i
 
   it('reports the engine versions and the resolved conventions the answer was computed under', () => {
     expect(res.diagnostics.engineInfo.iztro).toBe('2.6.0');
-    expect(res.diagnostics.engineInfo.schemaVersion).toBe('1.0.0');
+    expect(res.diagnostics.engineInfo.schemaVersion).toBe('2.0.0');
     expect(res.diagnostics.convention).toEqual({
       horoscopeDivide: 'lichun', ageDivide: 'normal', dayDivide: 'forward',
-      algorithm: 'default', astroType: 'heaven', fixLeap: true, trueSolar: false,
+      algorithm: 'default', astroType: 'heaven', fixLeap: true, solarTime: 'off',
     });
     expect(res.diagnostics.locationSource).toBe('caller_supplied');
   });

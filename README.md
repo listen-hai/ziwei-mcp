@@ -22,10 +22,10 @@ Birth Wall Clock + IANA Timezone  (1990-06-15 20:00 America/Los_Angeles)
                           │
             ┌─────────────┴─────────────┐
             ▼                           ▼
-   【Axis A: true UTC instant】   【Axis B: local true solar time】
-     decides the year ganzhi        longitude + Meeus EoT − DST
+   【Axis A: true UTC instant】   【Axis B: local solar time】
+     decides the year ganzhi        longitude [+ Meeus EoT] − DST
     (正月初一 by default, or         decides lunar date + timeIndex
-     the exact 立春 instant)
+     the exact 立春 instant)          (solarTime: true/mean/off)
             │                           │
             ▼                           ▼
         year ganzhi  ───────────►  iztro star placement
@@ -36,7 +36,7 @@ Birth Wall Clock + IANA Timezone  (1990-06-15 20:00 America/Los_Angeles)
 
 Zi Wei couples time to the chart in two different ways, and conflating them is the single most common source of wrong charts:
 
-- The **hour, day and month** come from local true solar time at the birthplace (Axis B) — they decide the 命宫/身宫, the 紫微 and 天府 series, and 昌曲/空劫/火铃.
+- The **hour, day and month** come from local solar time at the birthplace (Axis B, correction mode set by `solarTime`) — they decide the 命宫/身宫, the 紫微 and 天府 series, and 昌曲/空劫/火铃.
 - The **year ganzhi** comes from the resolved birth instant in real physical time (Axis A) — it decides the 宫干 (五虎遁), all 四化, every year-based star, and the 大限 sequence. By default the boundary is 正月初一 (the mainstream 紫微斗数 convention — see `yearDivide` below); the true 立春 instant is available as an opt-in for the 八字/子平术-aligned boundary.
 
 A birth two hours before 立春 in Los Angeles is *after* 立春 in Beijing. When `yearDivide:'lichun'` is in effect, only one of those is the year ganzhi, and getting it wrong invalidates the whole chart, not part of it.
@@ -103,7 +103,8 @@ Requires `gender`, one of `solarDate`/`lunarDate`, one of `clockTime`/`shichen`,
 | `algorithm` | `default` (通行版) · `zhongzhou` (中州派) | Star-placement algorithm |
 | `astroType` | `heaven` · `earth` · `human` | 天/地/人盘 — effective under either `algorithm`, not Zhongzhou-only |
 | `fixLeap` | boolean (default `true`) | Split leap months at the 15th (闰月十五日为界) — matches iztro's own factory default |
-| `trueSolar` | boolean (default `true`) | Apply true solar time correction. When the correction moves a birth across a 时辰 boundary, `diagnostics.trueSolarNote` names both the corrected and uncorrected shichen, the correction size, and the classical caution 「不准但用三时断，时有差误不可凭」 |
+| `solarTime` | `true` (default) · `mean` · `off` | Solar time correction mode: `true` applies both the longitude correction and the equation of time (full True Solar Time); `mean` applies only the longitude correction, no equation of time (地方平太阳时); `off` applies neither, using the wall clock as given. When the applied correction moves a birth across a 时辰 boundary, `diagnostics.trueSolarNote` names both the corrected and uncorrected shichen, the correction size, and the classical caution 「不准但用三时断，时有差误不可凭」 |
+| `trueSolar` | boolean, **deprecated** | Superseded by `solarTime` (`true` → `"true"`, `false` → `"off"`) — kept as an alias; supplying both is rejected if they disagree |
 | `mutagens` | `{ "甲": ["廉贞","破军","武曲","太阳"], … }` | Override 四化 per heavenly stem |
 | `brightness` | `{ "紫微": ["庙","旺",…], … }` | Override star brightness |
 
@@ -117,7 +118,7 @@ Requires `gender`, one of `solarDate`/`lunarDate`, one of `clockTime`/`shichen`,
 
 ### 2. `calculate_ziwei_horoscope`
 
-运限 — the moving chart: 大限 (decade), 小限 (minor year), 流年/流月/流日/流时 (year/month/day/hour), each with its own 四化 and 运曜. Takes the same birth contract as `calculate_ziwei`, plus a `target` (solar date + clock time, resolved through the same time layer — true solar, IANA, DST). Omit `target` for "now".
+运限 — the moving chart: 大限 (decade), 小限 (minor year), 流年/流月/流日/流时 (year/month/day/hour), each with its own 四化 and 运曜. Takes the same birth contract as `calculate_ziwei`, plus a `target` (solar date + clock time, resolved through the same time layer — solar time correction mode, IANA, DST). Omit `target` for "now".
 
 It is a separate tool on purpose: folding six scopes × twelve palaces of 运曜 into the natal response would blow up an LLM's context for callers who only wanted the chart.
 
