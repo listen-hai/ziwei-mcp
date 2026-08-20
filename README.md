@@ -105,7 +105,7 @@ Requires `gender`, one of `solarDate`/`lunarDate`, one of `clockTime`/`shichen`,
 | `mutagens` | `{ "甲": ["廉贞","破军","武曲","太阳"], … }` | Override 四化 per heavenly stem |
 | `brightness` | `{ "紫微": ["庙","旺",…], … }` | Override star brightness |
 
-> `algorithm: 'zhongzhou'`'s behavior has been exhaustively mapped against iztro (see `docs/zhongzhou-findings.md`), but only compared to secondhand online sources for Zhongzhou-school (王亭之) doctrine, not the original texts. One known contradiction: it does **not** change 四化 (庚/壬 stay on the textbook table, not the documented Zhongzhou one) — use `config.mutagens` if you need Zhongzhou 四化. `astroType:'earth'/'human'` combined with `algorithm:'default'` is rejected outright (not just unverified): it would return a chart whose 命主 contradicts its own 命宫.
+> `algorithm: 'zhongzhou'`'s behavior has been exhaustively mapped against iztro, but only compared to secondhand online sources for Zhongzhou-school (王亭之) doctrine, not the original texts. One known contradiction: it does **not** change 四化 (庚/壬 stay on the textbook table, not the documented Zhongzhou one) — use `config.mutagens` if you need Zhongzhou 四化. `astroType:'earth'/'human'` combined with `algorithm:'default'` is rejected outright (not just unverified): it would return a chart whose 命主 contradicts its own 命宫.
 
 **Not supported: unknown birth time.** 命宫, 身宫, 文昌/文曲, 火星/铃星 and 地空/地劫 all depend on the hour. Without it there is no chart, so the request is rejected rather than answered with a partial one. `shichen` is supported; when true-solar correction pushes a spoken shichen across a boundary, the response carries `shichenAmbiguity` with the candidate `timeIndex` values instead of a confidently wrong single chart.
 
