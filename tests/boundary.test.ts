@@ -5,6 +5,8 @@ import { ZiweiHoroscopeInputSchema } from '../src/schemas/horoscope';
 import starZhCN from 'iztro/lib/i18n/locales/zh-CN/star';
 import { ganZhiOfLunarYear, lunarYearForGanZhi } from '../src/core/lunar';
 import { resolveLocation, lookupCity } from '../src/geo/resolver';
+import { getStandardOffsetMinutes, tzOffsetMs } from '../src/core/time';
+import { shichenCandidateTimeIndexes } from '../src/core/time-index';
 import type { ZiweiInput, ValidatedZiweiInput } from '../src/types';
 import { idx, findStarTrimmed } from './ziwei-rules';
 
@@ -97,6 +99,79 @@ describe('8.2 DST gaps, folds and dstFold', () => {
     });
     expect(res.palaces).toHaveLength(12);
     expect(res.diagnostics.warnings.some(w => w.includes('spring-forward gap') && w.includes('Asia/Shanghai'))).toBe(true);
+  });
+
+  /**
+   * bazi-mcp fix (ported byte-for-byte into src/core/time.ts): getStandardOffsetMinutes
+   * takes max(min over the backward 12-month half-window, min over the forward 12-month
+   * half-window) instead of a single global min over a +/-6 month window. A permanent
+   * offset shift is monotonic, so the two half-window minima differ and the max picks
+   * whichever offset is actually in force at the instant.
+   *
+   * Russia's Europe/Moscow is a real, independently-documented case: DST was abolished
+   * on 2011-03-27, freezing the clock permanently at summer time (UTC+4) until it
+   * reverted to permanent winter time (UTC+3) on 2014-10-26. At 2014-08-01 (well inside
+   * that frozen window, and still 3 months before the next-ever change), the offset
+   * actually in force is UTC+4 = 240 minutes.
+   */
+  describe('getStandardOffsetMinutes (fix 1: half-window max, not global min)', () => {
+    it('old formula (global min over a +/-6mo window) and new formula genuinely disagree here, by a full hour', () => {
+      const instant = Date.UTC(2014, 7, 1, 8, 0, 0); // 2014-08-01
+      // Reconstruct the OLD (pre-fix) formula inline to prove divergence, rather than
+      // trusting the new implementation alone: 13 monthly samples across a +/-6mo window.
+      let oldMin = tzOffsetMs(instant, 'Europe/Moscow') / 60000;
+      for (let i = -6; i <= 6; i++) {
+        const off = tzOffsetMs(instant + i * 30 * 86400000, 'Europe/Moscow') / 60000;
+        if (off < oldMin) oldMin = off;
+      }
+      expect(oldMin).toBe(180); // old formula wrongly reaches back to pre-2011 winter standard (+03:00)
+      expect(getStandardOffsetMinutes(instant, 'Europe/Moscow')).toBe(240); // new formula: +04:00, actually in force
+      expect(240 - oldMin).toBe(60);
+    });
+
+    it('reports the offset actually in force (Europe/Moscow 2014-08-01 = +04:00), not a future permanent change', () => {
+      const instant = Date.UTC(2014, 7, 1, 8, 0, 0);
+      expect(tzOffsetMs(instant, 'Europe/Moscow') / 60000).toBe(240); // sanity: actual offset at this instant
+      expect(getStandardOffsetMinutes(instant, 'Europe/Moscow')).toBe(240);
+    });
+
+    it('still reports true seasonal standard time in an ordinary DST zone (America/Chicago, 2024-05-01 CDT)', () => {
+      const instant = Date.UTC(2024, 4, 1, 15, 0, 0);
+      expect(getStandardOffsetMinutes(instant, 'America/Chicago')).toBe(-360);
+    });
+  });
+
+  /**
+   * bazi-mcp fix (089066f, ported here as the same idea applied to
+   * shichenCandidateTimeIndexes): a spring-forward gap and a fall-back fold both make
+   * wallToInstant throw at a bare sample point, but they mean opposite things. A gap
+   * wall time doesn't exist, so skipping it is correct. A fold wall time exists twice,
+   * so skipping it silently drops exactly the candidate this function exists to
+   * enumerate. Reproduced directly (not through the full chart) on 1990-10-28
+   * America/Chicago (fall-back 02:00 -> 01:00), shichen 丑 (01:00-02:59), longitude
+   * -87.6: fold 0 alone yields [0,1,2], fold 1 alone yields [1,2] -- so without a
+   * caller-supplied dstFold the correct answer is their union [0,1,2], and candidate 0
+   * must not be silently lost.
+   */
+  it('fix 2: a shichen straddling a DST fall-back fold returns the full union of candidates from both occurrences', () => {
+    const params = {
+      shichen: '丑' as const,
+      year: 1990,
+      month: 10,
+      day: 28,
+      tz: 'America/Chicago',
+      longitude: -87.6,
+      trueSolar: true,
+    };
+    const noFold = shichenCandidateTimeIndexes(params);
+    const fold0 = shichenCandidateTimeIndexes({ ...params, dstFold: 0 });
+    const fold1 = shichenCandidateTimeIndexes({ ...params, dstFold: 1 });
+
+    expect(fold0).toEqual([0, 1, 2]);
+    expect(fold1).toEqual([1, 2]);
+    // The realistic no-dstFold case must recover candidate 0, which fold 1 alone can't see.
+    expect(noFold).toEqual([0, 1, 2]);
+    expect(noFold).toContain(0);
   });
 });
 

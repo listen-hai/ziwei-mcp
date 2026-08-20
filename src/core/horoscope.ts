@@ -145,23 +145,40 @@ export function calculateZiweiHoroscope(input: ValidatedZiweiHoroscopeInput): Zi
   const targetLocalWall = instantToWall(targetInstant, natal.loc.timezone);
   const targetStandardWall = toUTCWall(targetInstant + targetStandardOffsetMinutes * 60000);
 
+  // Same defect and same fix as chart.ts's buildNatalAstrolabe (fix 1, see its comment):
+  // compute the correction unconditionally so it's available to report/warn on, even
+  // though trueSolar only applies it to timeIndex/trueSolarWall below. Unlike the natal
+  // path, ZiweiHoroscopeDiagnostics has no longitudeCorrectionMinutes/equationOfTimeMinutes
+  // fields to begin with (never did, in either trueSolar mode) — targetSolarIdx.timeIndex/
+  // trueSolarWall are the only fields ever read off it elsewhere in this function — so
+  // there is no pre-existing "reports 0 instead of the truth" lie to fix for those two
+  // fields specifically. What IS structurally identical to fix 1's real defect: a large
+  // discarded correction can silently move targetTimeIndex across a 时辰 boundary with no
+  // signal at all. Port the warning for that, without inventing new diagnostics fields
+  // this type never had.
+  const targetFullSolarIdx = trueSolarTimeIndex({
+    year: targetLocalWall.year,
+    month: targetLocalWall.month,
+    day: targetLocalWall.day,
+    hour: targetLocalWall.hour,
+    minute: targetLocalWall.minute,
+    standardOffsetHours: targetStandardOffsetMinutes / 60,
+    dstOffsetHours: targetDstOffsetHours,
+    longitude: natal.loc.longitude,
+  });
   const targetSolarIdx = natal.opts.trueSolar
-    ? trueSolarTimeIndex({
-        year: targetLocalWall.year,
-        month: targetLocalWall.month,
-        day: targetLocalWall.day,
-        hour: targetLocalWall.hour,
-        minute: targetLocalWall.minute,
-        standardOffsetHours: targetStandardOffsetMinutes / 60,
-        dstOffsetHours: targetDstOffsetHours,
-        longitude: natal.loc.longitude,
-      })
+    ? targetFullSolarIdx
     : {
         timeIndex: toTimeIndex(targetStandardWall.hour, targetStandardWall.minute),
         trueSolarWall: targetStandardWall,
-        longitudeCorrectionMinutes: 0,
-        equationOfTimeMinutes: 0,
+        longitudeCorrectionMinutes: targetFullSolarIdx.longitudeCorrectionMinutes,
+        equationOfTimeMinutes: targetFullSolarIdx.equationOfTimeMinutes,
       };
+  if (!natal.opts.trueSolar && Math.abs(targetFullSolarIdx.longitudeCorrectionMinutes) > 30) {
+    warnings.push(
+      `trueSolar is false: a longitude correction of ${targetFullSolarIdx.longitudeCorrectionMinutes.toFixed(1)} minutes was computed but NOT applied to the target instant; targetTimeIndex (时辰) and the target lunar date may differ from a true-solar-time chart.`
+    );
+  }
 
   // ── Defect 5a: timeIndex 12 (晚子) advances iztro's internal day ganzhi but not
   // daily.index/lunarDate — dayDivide has no effect on horoscope() at all (brief

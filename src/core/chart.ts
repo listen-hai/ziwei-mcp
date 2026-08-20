@@ -258,9 +258,14 @@ export function buildNatalAstrolabe(input: ValidatedZiweiInput): NatalBuild {
       instant = resolveWallInstant(beijingWall, 'Asia/Shanghai').result.instant;
       localWall = instantToWall(instant, loc.timezone);
       offsetMinutes = tzOffsetMinutes(instant, loc.timezone);
-      const janOffset = tzOffsetMinutes(Date.UTC(localWall.year, 0, 15, 12, 0), loc.timezone);
-      const julOffset = tzOffsetMinutes(Date.UTC(localWall.year, 6, 15, 12, 0), loc.timezone);
-      isDst = offsetMinutes > Math.min(janOffset, julOffset);
+      // Matches bazi-mcp's dual-axis.ts exactly (and every other isDst determination in
+      // this file, via wallToInstant in time.ts): DST is "actual offset > the zone's own
+      // standard (non-DST) offset for this instant", not "offset > min(Jan, Jul) sample".
+      // The old Jan/Jul heuristic bazi already deleted misfires for any zone whose
+      // standard offset isn't the min of those two samples — e.g. Moscow's 2011-2014
+      // permanent +4 reads as "DST in effect" here while the identical instant entered
+      // via solarDate (which goes through wallToInstant/getStandardOffsetMinutes) does not.
+      isDst = offsetMinutes > getStandardOffsetMinutes(instant, loc.timezone);
     } else {
       localWall = { year: conv.solarYear, month: conv.solarMonth, day: conv.solarDay, hour: baseHour, minute: baseMinute, second: 0 };
       const { wall: resolvedWall, result: wRes } = resolveWallInstant(localWall);
@@ -290,27 +295,47 @@ export function buildNatalAstrolabe(input: ValidatedZiweiInput): NatalBuild {
   // *standard* wall clock, with `enableTrueSolarTime` only toggling the longitude/equation-of-
   // time step on top of that) — it does not mean "use the raw civil clock unmodified".
   const standardWall = toUTCWall(instant + standardOffsetMinutes * 60000);
+
+  // Port of bazi-mcp's dual-axis.ts fix: the longitude/equation-of-time correction is a pure
+  // function of the civil wall clock + longitude, so compute it UNCONDITIONALLY — even when
+  // trueSolar is off — instead of hard-reporting `0`. trueSolar only toggles whether the
+  // correction is actually APPLIED to timeIndex/trueSolarWall below; `longitudeCorrectionMinutes`/
+  // `equationOfTimeMinutes` (read off `solarIdx` by the caller, in both branches) always carry the
+  // real computed value regardless, so a caller is never told a ~176-minute correction was `0`
+  // just because it wasn't applied. `convention.trueSolar` (diagnostics, below) is what tells the
+  // caller whether it was applied — these two fields never claimed to mean "applied" on their own,
+  // so no field rename is needed to keep that distinction honest.
+  const fullSolarIdx = trueSolarTimeIndex({
+    year: localWall.year,
+    month: localWall.month,
+    day: localWall.day,
+    hour: localWall.hour,
+    minute: localWall.minute,
+    standardOffsetHours: standardOffsetMinutes / 60,
+    dstOffsetHours,
+    longitude: loc.longitude,
+  });
   const solarIdx = opts.trueSolar
-    ? trueSolarTimeIndex({
-        year: localWall.year,
-        month: localWall.month,
-        day: localWall.day,
-        hour: localWall.hour,
-        minute: localWall.minute,
-        standardOffsetHours: standardOffsetMinutes / 60,
-        dstOffsetHours,
-        longitude: loc.longitude,
-      })
+    ? fullSolarIdx
     : {
         timeIndex: toTimeIndex(standardWall.hour, standardWall.minute),
         trueSolarWall: standardWall,
-        longitudeCorrectionMinutes: 0,
-        equationOfTimeMinutes: 0,
+        longitudeCorrectionMinutes: fullSolarIdx.longitudeCorrectionMinutes,
+        equationOfTimeMinutes: fullSolarIdx.equationOfTimeMinutes,
       };
 
   if (Math.abs(solarIdx.longitudeCorrectionMinutes) > 240) {
     warnings.push(
       `Astronomical sanity warning: longitude correction (${solarIdx.longitudeCorrectionMinutes.toFixed(1)} min) exceeds +/-240 minutes relative to the timezone standard meridian (${loc.timezone}). Please verify that the specified longitude and timezone belong to the same geographic region.`
+    );
+  }
+
+  // bazi-mcp's dual-axis.ts threshold (30 min): trueSolar:false discards this correction
+  // entirely rather than reporting a lie about it (see comment above) — warn when the
+  // discarded amount is large enough to plausibly move the 时辰 (timeIndex) boundary.
+  if (!opts.trueSolar && Math.abs(fullSolarIdx.longitudeCorrectionMinutes) > 30) {
+    warnings.push(
+      `trueSolar is false: a longitude correction of ${fullSolarIdx.longitudeCorrectionMinutes.toFixed(1)} minutes was computed but NOT applied; the timeIndex (时辰) and lunar date placement may differ from a true-solar-time chart.`
     );
   }
 

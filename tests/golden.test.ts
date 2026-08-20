@@ -225,7 +225,15 @@ describe('Regression: zod defaults must not depend on who built the input', () =
     const off = chart({ ...raw, trueSolar: false });
     expect(off.lunar.timeIndex).toBe(10);
     expect(off.lunar.shichen).toBe('戌');
-    expect(off.diagnostics.longitudeCorrectionMinutes).toBe(0);
+    // Fix: trueSolar:false must not silently report the discarded correction as 0 — the
+    // -136 min value is the same physical correction independently asserted above (same
+    // longitude/timezone/date, trueSolar:true), just not applied to the chart here.
+    // `convention.trueSolar` (asserted below) is what actually says "not applied".
+    expect(off.diagnostics.longitudeCorrectionMinutes).toBe(-136);
+    expect(off.diagnostics.convention.trueSolar).toBe(false);
+    expect(off.diagnostics.warnings).toContain(
+      'trueSolar is false: a longitude correction of -136.0 minutes was computed but NOT applied; the timeIndex (时辰) and lunar date placement may differ from a true-solar-time chart.'
+    );
     // Different timeIndex => different 命宫 => a materially different chart.
     expect(off.soulPalace.branch).not.toBe(chart(raw).soulPalace.branch);
   });

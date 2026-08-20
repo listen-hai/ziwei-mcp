@@ -6,8 +6,8 @@ import {
   ListToolsRequestSchema,
   Tool,
 } from '@modelcontextprotocol/sdk/types.js';
-import { parseZiweiInput, LookupLocationSchema } from '../schemas/input';
-import { parseZiweiHoroscopeInput } from '../schemas/horoscope';
+import { parseZiweiInput, LookupLocationSchema, ZiweiInputObjectSchema } from '../schemas/input';
+import { parseZiweiHoroscopeInput, HoroscopeTargetSchema } from '../schemas/horoscope';
 import { calculateZiweiChart } from '../core/chart';
 import { calculateZiweiHoroscope } from '../core/horoscope';
 import { lookupCity } from '../geo/resolver';
@@ -44,6 +44,80 @@ export function formatZodError(err: z.ZodError): string {
   return msg;
 }
 
+// The tool-schema/zod-schema drift this project's own philosophy refuses elsewhere
+// (assertLeapMonthExists, the ageDivide:'birthday' rejection, StarNameEnum — see
+// their own comments in src/schemas/*.ts): 0.2.0 changed four `ZIWEI_DEFAULTS`
+// values but the hand-written JSON Schema below was never updated, so an LLM
+// caller reading this tool's advertised schema was told the PRE-0.2.0 defaults —
+// actively wrong, not just stale. And six numeric bounds zod enforces (longitude
+// ±180, the four date/time sub-fields) were never advertised at all. Both classes
+// are re-typed values, so both can silently drift again the same way — instead,
+// derive `default`/`minimum`/`maximum` straight off the zod schema below and merge
+// them onto the hand-written `type`/`enum`/`description` (prose zod has no
+// equivalent for). tests/schema_parity.test.ts independently re-derives the same
+// two things straight from zod (not from this code) and compares, so a future
+// change to either schema without updating the other still gets caught — this
+// derivation just makes today's two misses impossible to reintroduce by hand-typing.
+
+/** Strips ZodOptional/ZodDefault/ZodEffects wrappers down to the base type — mirrors
+ * tests/schema_parity.test.ts's own independent `unwrap` (same zod internals, written
+ * separately) rather than importing it, so the test stays a check ON this code, not a
+ * shared dependency of it. */
+function unwrapZod(schema: any): any {
+  let current = schema;
+  while (current?._def?.innerType || current?._def?.schema) {
+    current = current._def.innerType ?? current._def.schema;
+  }
+  return current;
+}
+
+/** zod's own numeric min/max checks (z.number().min()/.max()), in JSON Schema vocabulary. */
+function zodNumberBounds(schema: any): { minimum?: number; maximum?: number } {
+  const base = unwrapZod(schema);
+  if (base?._def?.typeName !== 'ZodNumber') return {};
+  const bounds: { minimum?: number; maximum?: number } = {};
+  for (const check of base._def.checks ?? []) {
+    if (check.kind === 'min') bounds.minimum = check.value;
+    if (check.kind === 'max') bounds.maximum = check.value;
+  }
+  return bounds;
+}
+
+/** zod's own `.default(...)` value for a field, or undefined if it has none. */
+function zodDefaultValue(schema: any): unknown {
+  let node: any = schema;
+  while (node?._def?.innerType && node._def.typeName !== 'ZodDefault') node = node._def.innerType;
+  return node?._def?.typeName === 'ZodDefault' ? node._def.defaultValue() : undefined;
+}
+
+/**
+ * Merges a zod field's derived `default`/`minimum`/`maximum` onto a hand-written JSON
+ * Schema property, recursing one level into nested object properties (solarDate.year,
+ * clockTime.hour, etc.) using the zod field's own `.shape`. `type`/`enum`/`description`
+ * are left exactly as hand-written — only the two things that actually drifted
+ * (defaults, numeric bounds) are ever overwritten here.
+ */
+function withZodConstraints(zodField: any, prop: any): any {
+  if (!zodField) return prop;
+  const merged: any = { ...prop, ...zodNumberBounds(zodField) };
+  const def = zodDefaultValue(zodField);
+  if (def !== undefined) merged.default = def;
+
+  const base = unwrapZod(zodField);
+  if (merged.properties && base?._def?.typeName === 'ZodObject') {
+    const nestedShape = base.shape as Record<string, any>;
+    merged.properties = Object.fromEntries(
+      Object.entries(merged.properties).map(([nested, nestedProp]) => [
+        nested,
+        withZodConstraints(nestedShape[nested], nestedProp),
+      ])
+    );
+  }
+  return merged;
+}
+
+const birthInputZodShape = ZiweiInputObjectSchema.shape as Record<string, any>;
+
 export function createZiweiMcpServer(): Server {
   const server = new Server(
     {
@@ -63,7 +137,7 @@ export function createZiweiMcpServer(): Server {
   // definition) is what keeps the two tools' advertised schemas from drifting apart —
   // exactly the discipline tests/mcp.test.ts's "advertised schema must not drift from
   // the zod schema" check already enforces for calculate_ziwei alone.
-  const birthInputProperties: Record<string, object> = {
+  const birthInputPropertiesRaw: Record<string, object> = {
           place: {
             type: 'string',
             description: 'Birth city name in ENGLISH (e.g. "Beijing", "New York", "Lagos", "Tacoma, WA"). Translate from other languages before passing.',
@@ -132,43 +206,36 @@ export function createZiweiMcpServer(): Server {
           yearDivide: {
             type: 'string',
             enum: ['lichun', 'lunar_new_year'],
-            default: 'lichun',
-            description: 'Year-ganzhi boundary: lichun (default, 立春, determined on the true UTC instant — matches bazi-mcp) or lunar_new_year (正月初一)',
+            description: 'Year-ganzhi boundary: lunar_new_year (default, 正月初一 — the mainstream 紫微斗数 convention) or lichun (立春, determined on the true UTC instant, matching bazi-mcp — 八字/子平术\'s own boundary; still the only *correct* 立春 implementation in the ecosystem, just not this system\'s default).',
           },
           horoscopeDivide: {
             type: 'string',
             enum: ['lichun', 'lunar_new_year'],
-            default: 'lichun',
-            description: 'Same convention as yearDivide, for horoscope (运限) year rollover. Used by the calculate_ziwei_horoscope tool to determine 流年; has no effect on this tool\'s own output.',
+            description: 'Same boundary convention as yearDivide (lunar_new_year is the default), for horoscope (运限) year rollover. Used by the calculate_ziwei_horoscope tool to determine 流年; has no effect on this tool\'s own output.',
           },
           ageDivide: {
             type: 'string',
             enum: ['normal', 'birthday'],
-            default: 'normal',
-            description: 'Small-limit (小限) boundary: normal (natural year) or birthday. Note: calculate_ziwei_horoscope rejects "birthday" outright (see that tool\'s own docs) — 小限 has no effect on this tool\'s own output, so the option is inert here.',
+            description: 'Small-limit (小限) boundary: normal (default, natural year) or birthday. Note: calculate_ziwei_horoscope rejects "birthday" outright (see that tool\'s own docs) — 小限 has no effect on this tool\'s own output, so the option is inert here.',
           },
           dayDivide: {
             type: 'string',
             enum: ['current', 'forward'],
-            default: 'current',
-            description: 'Late-Zi-hour (晚子时, 23:00-24:00) convention: current (default, same day) or forward (next day)',
+            description: 'Late-Zi-hour (晚子时, 23:00-24:00) convention: forward (default, counts as the next day — iztro\'s own factory default) or current (counts as the same day)',
           },
           algorithm: {
             type: 'string',
             enum: ['default', 'zhongzhou'],
-            default: 'default',
             description: 'Star-placement algorithm: default (通行版) or zhongzhou (中州派). Verified exhaustively: zhongzhou does NOT change 四化 — e.g. 庚 stays 禄:太阳 权:武曲 科:太阴 忌:天同 and 壬 stays 禄:天梁 权:紫微 科:左辅 忌:武曲, not the documented 中州派 阳武府同 / 梁紫府武 (天府化科; 中州派 also holds 左辅/右弼 take no 四化 at all, which iztro\'s 壬科:左辅 contradicts). zhongzhou only changes 杂曜 (drops 截路/空亡, adds 截空/劫杀/大耗/龙德, swaps 天伤/天使 for 阴年男/阳年女) and how 命主 is derived (年支 instead of 命宫支). If you need 中州派 四化, supply your own table via `config.mutagens`.',
           },
           astroType: {
             type: 'string',
             enum: ['heaven', 'earth', 'human'],
-            default: 'heaven',
             description: 'Zhongzhou-school chart type (天盘/地盘/人盘). Effective under either `algorithm` value — verified identical whether `algorithm` is \'default\' or \'zhongzhou\'; NOT limited to zhongzhou despite the name. \'earth\'/\'human\' re-seat 命宫 (to 身宫 / 福德宫) and, with it, 五行局, the twelve palace names, the 14 major stars, 长生十二神, and the decadal (大限) sequence. `earthlyBranchOfBodyPalace`, 天寿, and 命主/身主 keep their 天盘 values — they are NOT re-seated. Under algorithm:\'default\' this would leave 命主 contradicting the returned 命宫, so calculate_ziwei rejects astroType:\'earth\'/\'human\' combined with algorithm:\'default\'; calculate_ziwei_horoscope still accepts it since 命主/身主 never appear in its output.',
           },
           fixLeap: {
             type: 'boolean',
-            default: false,
-            description: 'Whether to fix leap-month boundaries at the 15th day (闰月十五日为界修正)',
+            description: 'Whether to fix leap-month boundaries at the 15th day (闰月十五日为界修正). Default true (iztro\'s own factory default).',
           },
           trueSolar: {
             type: 'boolean',
@@ -185,6 +252,14 @@ export function createZiweiMcpServer(): Server {
             additionalProperties: { type: 'array', items: { type: 'string' }, minItems: 12, maxItems: 12 },
           },
   };
+
+  // Derived, not hand-copied — see withZodConstraints's own comment above.
+  const birthInputProperties: Record<string, object> = Object.fromEntries(
+    Object.entries(birthInputPropertiesRaw).map(([field, prop]) => [
+      field,
+      withZodConstraints(birthInputZodShape[field], prop),
+    ])
+  );
 
   const tools: Tool[] = [
     {
@@ -206,7 +281,7 @@ export function createZiweiMcpServer(): Server {
         type: 'object',
         properties: {
           ...birthInputProperties,
-          target: {
+          target: withZodConstraints(HoroscopeTargetSchema, {
             type: 'object',
             description: 'The instant to compute 运限 for. Omit entirely to default to "now". If provided, both solarDate and clockTime are required (no partial target).',
             additionalProperties: false,
@@ -239,7 +314,7 @@ export function createZiweiMcpServer(): Server {
               },
             },
             required: ['solarDate', 'clockTime'],
-          },
+          }),
         },
         required: ['gender'],
         additionalProperties: false,

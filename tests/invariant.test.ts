@@ -371,3 +371,71 @@ describe('8.3 Determinism', () => {
     expect(res.diagnostics.yearDivideApplied).toBe('lunar_new_year');
   });
 });
+
+describe('8.3 Dual-axis split: longitude reaches Axis B and never Axis A', () => {
+  /**
+   * A solar term is a single global instant — the moment the sun reaches a given
+   * ecliptic longitude — so whether a birth falls before or after it must be
+   * decided on the UTC instant, never on a longitude-corrected local time. The
+   * 时辰 (and with it timeIndex, the soul palace, the body palace and several
+   * star placements) is the opposite: it is defined by where the sun stood at
+   * the birthplace. That split is the entire reason for the dual-axis design,
+   * and applying the longitude correction to Axis A is the classic way other
+   * implementations get this wrong.
+   *
+   * The Z1 block above already varies the timezone, but each of its cities sits
+   * near its own zone meridian, so a longitude correction leaking into Axis A
+   * stays small and can hide. This varies longitude *within one timezone*
+   * instead — Kashgar and Harbin are ~51 degrees apart and both Asia/Shanghai —
+   * and straddles 立春 2025 by ten minutes either side, where any leak changes
+   * the answer.
+   *
+   * It also asserts the complementary half that nothing else covers: the two
+   * sites must produce *different* timeIndexes at the same instant. A change
+   * that made Axis B follow Beijing time as well would leave every other test
+   * in this suite green.
+   *
+   * Ported from bazi-mcp's commit 48b9e2e.
+   */
+  it('decides the 立春 boundary on the UTC instant while timeIndex follows local solar time', () => {
+    // 立春 2025 = 2025-02-03 22:10:14 CST = 14:10:14 UTC. Both sites are
+    // Asia/Shanghai, so the wall clock is the same at both and only longitude
+    // differs — exactly the isolation this test needs.
+    const sites = [
+      { name: 'Kashgar', longitude: 75.97 },
+      { name: 'Harbin', longitude: 126.53 },
+    ];
+
+    const chartAt = (hour: number, minute: number, site: typeof sites[number]) =>
+      chart({
+        timezone: 'Asia/Shanghai',
+        longitude: site.longitude,
+        solarDate: { year: 2025, month: 2, day: 3 },
+        clockTime: { hour, minute },
+        // yearDivide defaults to 'lunar_new_year' since 0.2.0; the 立春-instant
+        // machinery this test pins only engages when 'lichun' is asked for.
+        yearDivide: 'lichun',
+        trueSolar: true,
+        gender: 'male',
+      });
+
+    for (const [hour, minute, utcInstant, yearGanZhi] of [
+      [22, 0, '2025-02-03T14:00:00.000Z', '甲辰'],   // ten minutes before 立春
+      [22, 20, '2025-02-03T14:20:00.000Z', '乙巳'],  // ten minutes after
+    ] as Array<[number, number, string, string]>) {
+      const charts = sites.map(site => chartAt(hour, minute, site));
+
+      // Same instant, ~51 degrees of longitude apart: the term boundary cannot move.
+      for (const [index, res] of charts.entries()) {
+        expect(res.diagnostics.utcInstant, sites[index].name).toBe(utcInstant);
+        expect(res.diagnostics.yearGanZhi, sites[index].name).toBe(yearGanZhi);
+      }
+
+      // ...while timeIndex must differ, because the sun does not stand in the
+      // same place over Kashgar and Harbin at one instant (51 degrees is ~204
+      // minutes of solar time, well over one 时辰).
+      const timeIndexes = charts.map(res => res.diagnostics.timeIndex);
+      expect(new Set(timeIndexes).size, `timeIndexes ${timeIndexes.join(',')}`).toBe(sites.length);
+    }
+  });
+});

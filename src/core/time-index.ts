@@ -98,31 +98,43 @@ export function shichenCandidateTimeIndexes(params: {
   trueSolar: boolean;
 }): number[] {
   const candidates = new Set<number>();
+  // A gap (spring-forward) and a fold (fall-back) both make a bare sample point
+  // throw, but they mean opposite things: a gap wall time doesn't exist, so
+  // skipping is correct; a fold wall time exists twice, so skipping would
+  // silently drop exactly the candidate this function exists to enumerate. If
+  // the caller already disambiguated via `params.dstFold`, honor that and sample
+  // only the occurrence they meant. Otherwise, try both fold occurrences for
+  // each sample point: `wallToInstant` ignores `dstFold` whenever there's only
+  // one candidate (ordinary day, or a gap), so this is a no-op there and the
+  // `Set` below dedupes; on a fold it yields both timeIndex values.
+  const foldsToTry: Array<0 | 1 | undefined> = params.dstFold !== undefined ? [params.dstFold] : [0, 1];
   for (const pt of getShichenSamplePoints(params.shichen)) {
-    try {
-      const wallForSample = { year: params.year, month: params.month, day: params.day, hour: pt.hour, minute: pt.minute };
-      const wRes = wallToInstant(wallForSample, params.tz, params.dstFold);
-      const stdOffsetMinutes = getStandardOffsetMinutes(wRes.instant, params.tz);
-      if (params.trueSolar) {
-        const dstOffsetHours = wRes.isDst ? (wRes.offsetMinutes - stdOffsetMinutes) / 60 : 0;
-        const { timeIndex } = trueSolarTimeIndex({
-          year: wallForSample.year,
-          month: wallForSample.month,
-          day: wallForSample.day,
-          hour: wallForSample.hour,
-          minute: wallForSample.minute,
-          standardOffsetHours: stdOffsetMinutes / 60,
-          dstOffsetHours,
-          longitude: params.longitude,
-        });
-        candidates.add(timeIndex);
-      } else {
-        const stdWall = toUTCWall(wRes.instant + stdOffsetMinutes * 60000);
-        candidates.add(toTimeIndex(stdWall.hour, stdWall.minute));
+    for (const fold of foldsToTry) {
+      try {
+        const wallForSample = { year: params.year, month: params.month, day: params.day, hour: pt.hour, minute: pt.minute };
+        const wRes = wallToInstant(wallForSample, params.tz, fold);
+        const stdOffsetMinutes = getStandardOffsetMinutes(wRes.instant, params.tz);
+        if (params.trueSolar) {
+          const dstOffsetHours = wRes.isDst ? (wRes.offsetMinutes - stdOffsetMinutes) / 60 : 0;
+          const { timeIndex } = trueSolarTimeIndex({
+            year: wallForSample.year,
+            month: wallForSample.month,
+            day: wallForSample.day,
+            hour: wallForSample.hour,
+            minute: wallForSample.minute,
+            standardOffsetHours: stdOffsetMinutes / 60,
+            dstOffsetHours,
+            longitude: params.longitude,
+          });
+          candidates.add(timeIndex);
+        } else {
+          const stdWall = toUTCWall(wRes.instant + stdOffsetMinutes * 60000);
+          candidates.add(toTimeIndex(stdWall.hour, stdWall.minute));
+        }
+      } catch {
+        // Gap: this occurrence doesn't exist, skip it. (A fold never throws here
+        // since we're sampling each occurrence explicitly via `fold`.)
       }
-    } catch {
-      // DST gap (or unresolved fold) at this sample point — skip it, the primary
-      // wallToInstant call on the shichen midpoint already surfaces those errors.
     }
   }
   return Array.from(candidates).sort((a, b) => a - b);

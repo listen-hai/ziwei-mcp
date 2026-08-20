@@ -159,6 +159,23 @@ describe('Global multi-region: worldwide UTC offsets and DST', () => {
     expect(phoenix.diagnostics.yearGanZhi).toBe('癸未');
   });
 
+  it('lunarDateFrame:beijing does not misreport a permanent UTC+4 as DST (Moscow 2011-2014)', () => {
+    // Fix: the lunarDateFrame:'beijing' branch used to derive isDst via
+    // `offsetMinutes > Math.min(janOffset, julOffset)` — a heuristic bazi-mcp already
+    // deleted. Moscow abolished DST from 2011-03-27 through 2014-10-26, staying at a
+    // permanent +4 (2011's January was still old-regime +3, so the min-of-Jan/Jul
+    // heuristic misfires for exactly this window). The solarDate path (which goes
+    // through wallToInstant/getStandardOffsetMinutes, untouched by this bug) is the
+    // independent oracle both paths must agree with.
+    const common = { clockTime: { hour: 8, minute: 0 }, gender: 'male', place: 'Moscow, Russia', timezone: 'Europe/Moscow' } as const;
+    const viaSolar = chart({ solarDate: { year: 2011, month: 6, day: 16 }, ...common });
+    const viaLunarBeijing = chart({ lunarDate: { year: 2011, month: 5, day: 15 }, lunarDateFrame: 'beijing', ...common });
+
+    expect(viaLunarBeijing.diagnostics.lunar.solarDate).toBe('2011-06-16');
+    expect(viaSolar.diagnostics.utcOffset).toBe('+04:00');
+    expect(viaLunarBeijing.diagnostics.utcOffset).toBe('+04:00');
+  });
+
   /**
    * Year-range floor. bazi-mcp accepts 1800-2100; this project accepts 1900-2100
    * because that is the range lunar-lite's calendar tables actually cover. The two
