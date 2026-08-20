@@ -36,6 +36,13 @@
 
 **没有任何一个 MCP 是「iztro + 完整时间处理」。** 这就是本项目的位置。
 
+> **2026-08-19 更正：上面这句已不成立。** `Brhiza/mingyu`（343★）确有完整时间层
+> （`historical-timezone.ts` / `china-dst.ts` / `true-solar-time.ts` 含时差方程）。
+> 本项目真正独有的是 **Z1 绕过**：mingyu 把 `yearDivide` 直接透传给 iztro，
+> 并把 `'exact'` 标注为「以立春分年」（`runtime-helpers.ts:139`）——
+> 而 iztro 的 `'exact'` 只按**日期**分界，不按立春时刻。即它带着 Z1 且标错了名。
+> 完整调研见 `docs/competitive-landscape.md`。
+
 ---
 
 ## 3. 技术路线决策

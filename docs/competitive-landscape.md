@@ -56,8 +56,8 @@
 | "所有紫微 MCP、网站、移植，底下全是它" | **Overstated.** True of nearly every *high-star* project, false as a blanket claim. See §3. | §3 |
 | `ziweiknows/ziwei-chart` is **GPL-3.0** | **Confirmed.** GPL-3.0 via GitHub licence API; app is `iztro ^2.5.8`. | [licence](https://github.com/ziweiknows/ziwei-chart/blob/main/LICENSE) |
 | `Renhuai123/ziwei-doushu` = "Next.js + 倪海厦体系知识库, iztro + lunar-javascript" | **Confirmed** — despite its own description calling itself an "开源排盘引擎…含完整排盘算法", its `package.json` depends on `iztro ^2.5.8` + `lunar-javascript ^1.7.3`. It is a consumer, not an engine. Now the second-largest repo in the space at 3,576★, MIT, but **last pushed 2026-06-24** — ~2 months stale. | fetched `package.json` |
-| `smogievogie/ziwei_iztro-mcpserver` = "唯一处理真太阳时的 MCP" | **No longer true.** At least four MCP servers now do true-solar correction (§3). smogievogie itself is stale: last push **2025-08-15**, 13★, 72 npm downloads/month, still hard-bound to the AMap (高德) geocoding API and 120°E. | fetched source, npm API |
-| `spyfree/mingli-mcp` "不明，未实测" | **Now measured.** Real project: 20 test files / ~350 test functions, PyPI + Smithery + `server.json`, Docker, stdio+HTTP. But no timezone handling whatsoever and no equation of time. §3. | fetched source |
+| `smogievogie/ziwei_iztro-mcpserver` = "唯一处理真太阳时的 MCP" | **No longer true.** At least five MCP servers now do true-solar correction (§2). smogievogie itself is stale: last push **2025-08-15**, 13★, 72 npm downloads/month, still hard-bound to the AMap (高德) geocoding API and 120°E. | fetched source, npm API |
+| `spyfree/mingli-mcp` "不明，未实测" | **Now measured.** Real project: 20 test files / ~350 test functions, PyPI + Smithery + `server.json`, Docker, stdio+HTTP. But no timezone handling whatsoever and no equation of time. §2. | fetched source |
 | `SiwuXue/ziwei-mcp` / `Timmy9527/agentziwei` "偏解读产品" | **Confirmed**, and both are **unlicensed** (no LICENSE file → all rights reserved). SiwuXue last push 2025-08-02; agentziwei 2026-05-11. | GitHub licence API |
 | `EdwinXiang/dart_iztro` | MIT, 153★, but **last pushed 2025-06-27** — over a year stale, will have drifted from iztro 2.6.0. | GitHub API |
 | **"没有任何一个 MCP 是「iztro + 完整时间处理」。这就是本项目的位置。"** | **No longer true.** `Brhiza/mingyu` (343★, pushed 2026-08-18) does iztro + IANA historical timezones + DST gap/fold + equation of time + day-crossing, over an MCP server, a public API and a skill. Our remaining differentiators against it are narrower and specific: the **立春 instant** as a selectable year boundary (mingyu hardcodes 正月初一), exposed school parameters (mingyu hardcodes `dayDivide:'forward'`), and the classical-rules oracle. | fetched `packages/core/src/calendar/true-solar-time.ts` and `ziwei/runtime.ts` |
@@ -175,7 +175,9 @@ No public paid API found; the model is free 排盘 → paid human/AI reading. Tw
    product that even exposes it as a switch, and it implements it wrongly (Z1).
 2. **True solar time is table stakes in the Chinese market and absent from the developer layer.**
    文墨天机 defaults it on; 天机爻 requires it; 缘份居 makes it tri-state. Meanwhile iztro's entry
-   point is a bare `timeIndex 0–12` and every iztro-derived MCP server inherits that hole.
+   point is a bare `timeIndex 0–12`, so every iztro-derived MCP server inherits that hole unless
+   it bolts on its own correction layer — §2 shows five that now do (mingyu, Czerror, taibu,
+   mingli-mcp, smogievogie), of widely varying quality, and a long tail that does not.
    Our correctness advantage over *MCP servers* is real; over *Chinese consumer apps* it is not.
 3. **Defaults disagree in ways that silently change charts.** iztro defaults `dayDivide:'forward'`
    (晚子时 → next day); 神机阁 defaults the opposite. iztro defaults 正月初一; 极速数据's own
@@ -221,7 +223,11 @@ These are the claims I could not find matched anywhere else after checking every
 - **IANA timezones with historical offsets**: matched by mingyu (`Intl.DateTimeFormat`-backed)
   and partially by cka4913. Still rare, but no longer unique.
 - **Exposing school switches as parameters**: Czerror exposes 7 (badly — globally);
-  RedSC1/ziwei_core exposes more than we do, via JSON rule patching.
+  RedSC1/ziwei_core exposes more than we do, via JSON rule patching. And on the consumer side
+  we are behind, not ahead: **aiioo** offers 5 派別 (斗數全集/中州派/斗數全書/北派/占驗門),
+  2 早晚子時 rules and **3 閏月 排法** against our single boolean `fixLeap`; 文墨天机 lets users
+  edit the 四化表 outright. Our claim should be "every switch is *named and reported*", not
+  "we expose the most switches" — the latter is false.
 - **Trimmed LLM-oriented output**: x-iztro's `astrolabe_to_prompt()`, taibu's canonical JSON,
   mingyu's prompt payloads all solve the same problem.
 - **Test volume**: mingyu has ~1,399 cases across 12 systems; mingli-mcp ~350 for 2 systems;
@@ -279,7 +285,7 @@ Two more MCP servers worth knowing about, found only via registries:
 - **`LouisLin0723/fatestar-ziwei`** — the sole 紫微 entry in the official MCP registry
   (v2.0.0, site fatestar.top). Not otherwise visible on GitHub search.
 - **`@xzkcz/iztro-chart-mcp-server`** (npm, ISC, 25 dl/mo) — **renders chart images via
-  Playwright over MCP.** The visualisation gap in §7 already has an implementation to copy.
+  Playwright over MCP.** The visualisation gap in §9 already has an implementation to copy.
 - **`peixuan-mcp`** (npm, 25 dl/mo) is **CC-BY-NC-SA-4.0** — non-commercial. See §10.
 
 ---
@@ -432,4 +438,4 @@ dependency tree, and nothing vendored from the unlicensed set.
 - Glama's single-digit download figures were read through page summarisation; treat as
   approximate. Smithery "uses" is a tool-call metric, not installs. mcp-get's `uniqueInstalls`
   reads 0 for all 15,937 of its packages and was disregarded as unpopulated.
-- Activity claims go stale. Re-run §2 before quoting any of this after roughly 2026-10.
+- Activity claims go stale. Re-verify §1–§3 and §7 before quoting any of this after roughly 2026-10.

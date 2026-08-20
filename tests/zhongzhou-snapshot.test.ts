@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'bun:test';
+import { describe, it, expect, afterAll } from 'bun:test';
 import { astro } from 'iztro';
 import {
   G, idx, daysInLunarMonth, MUT, MUT_TAGS, FIVE_CLASS_LABEL, starMutagen, makeRandom,
@@ -58,6 +58,12 @@ const adjBranch = (chart: any, name: string): string | undefined =>
   chart.palaces.find((p: any) => p.adjectiveStars.some((s: any) => s.name === name))?.earthlyBranch;
 
 describe('中州派 switches (docs/zhongzhou-findings.md)', () => {
+  // iztro's config is module-level, global and sticky (findings doc 结论 E). Every build()
+  // here sets algorithm:'zhongzhou'; other suites pass a config WITHOUT an `algorithm` key,
+  // and astro.config() merges — so leaving it set would silently contaminate them. Do not
+  // rely on this file sorting last.
+  afterAll(() => { astro.config({ algorithm: 'default' }); });
+
   it('SNAPSHOT: algorithm:"zhongzhou" leaves 四化 completely untouched (documented 中州派 庚/壬 差异 NOT implemented)', () => {
     // 庚 is absent from ziwei-rules' MUT on purpose (disputed); assert it as an
     // explicit iztro snapshot alongside the nine consensus stems.
