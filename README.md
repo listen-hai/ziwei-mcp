@@ -3,7 +3,6 @@
 [![npm version](https://img.shields.io/npm/v/@lhk714/ziwei-mcp.svg)](https://www.npmjs.com/package/@lhk714/ziwei-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![CI](https://github.com/listen-hai/ziwei-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/listen-hai/ziwei-mcp/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-216%20passed%2C%200%20failed-brightgreen.svg)]()
 [![Bun](https://img.shields.io/badge/runtime-Bun%20%7C%20Node-black.svg)]()
 
 > Deterministic Zi Wei Dou Shu (紫微斗数排盘) Model Context Protocol (MCP) server: the `iztro` star-placement engine wrapped in a real astronomical time layer, with every school convention exposed as an explicit parameter.
@@ -79,6 +78,8 @@ npx -y @lhk714/ziwei-mcp@latest
 }
 ```
 
+> `@latest` re-resolves from the registry on every client launch — that's deliberate, so you always get fixes — but it costs a network round-trip at startup and fails hard offline. For an offline or latency-sensitive setup, pin an exact version instead, e.g. `@lhk714/ziwei-mcp@0.1.1`.
+
 ---
 
 ## 🛠️ Tools
@@ -117,7 +118,7 @@ Requires `gender`, one of `solarDate`/`lunarDate`, one of `clockTime`/`shichen`,
 
 It is a separate tool on purpose: folding six scopes × twelve palaces of 运曜 into the natal response would blow up an LLM's context for callers who only wanted the chart.
 
-iztro's 运限 *arithmetic* is sound — an independent implementation of the classical rules agrees with it across **303,582 assertions, zero mismatches**. Its *interface* needed wrapping, and this tool does it:
+iztro's 运限 *arithmetic* is sound — an independent implementation of the classical rules agrees with it. The CI-gated suite checks 200 seeded charts × 4 targets on every run; a one-time full manual sweep (`bun run tests/horoscope-parity-reference.mjs 800 10`) went further, agreeing across **303,582 assertions, zero mismatches**. Its *interface* needed wrapping, and this tool does it:
 
 - The year-ganzhi bypass that keeps the natal chart correct silently poisons every age-derived scope, because 虚岁 is `target lunar year − fed lunar year + 1`. Compensated per scope — 流月/流日/流时 always come from the true target, since 流日 is JDN-based and not 60-year periodic.
 - `horoscopeDivide` is locked: under iztro's `'exact'`, 流年 divides at 立春 while 虚岁/大限/小限 divide at 正月初一, so one response contradicts itself six days a year.
@@ -141,7 +142,7 @@ This server does not calculate Bazi. Use [`@lhk714/bazi-mcp`](https://github.com
 
 ## 🧪 Verification
 
-`bun test` — **216 tests**, including:
+`bun test` — every test below passing, including:
 
 - An **independent implementation of the classical star-placement rules** (安星诀) from the source texts, checked against iztro across hundreds of seeded random charts and ~18,000 assertions. This is what pins the engine: an upstream change to any star's placement fails the suite.
 - 立春-boundary scans asserting the year ganzhi flips **exactly once, at the true instant** — the regression guard for Z1.

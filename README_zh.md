@@ -3,7 +3,6 @@
 [![npm version](https://img.shields.io/npm/v/@lhk714/ziwei-mcp.svg)](https://www.npmjs.com/package/@lhk714/ziwei-mcp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![CI](https://github.com/listen-hai/ziwei-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/listen-hai/ziwei-mcp/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-216%20passed%2C%200%20failed-brightgreen.svg)]()
 [![Bun](https://img.shields.io/badge/runtime-Bun%20%7C%20Node-black.svg)]()
 
 > 确定性紫微斗数排盘 MCP 服务：以 `iztro` 为安星引擎，外面包一层真实的天文时间层，并把每一个流派选择显式暴露成参数。
@@ -78,6 +77,8 @@ npx -y @lhk714/ziwei-mcp@latest
 }
 ```
 
+> `@latest`会在每次客户端启动时重新从registry解析——这是刻意的，保证你总能拿到修复——但代价是启动时多一次网络往返，离线环境下会直接失败。若追求离线可用或更低延迟，改为锁定具体版本，例如`@lhk714/ziwei-mcp@0.1.1`。
+
 ---
 
 ## 🛠️ 工具
@@ -116,7 +117,7 @@ npx -y @lhk714/ziwei-mcp@latest
 
 **刻意做成独立工具**：把六个作用域 × 十二宫的运曜塞进本命盘响应，会把只想要一张盘的调用方的上下文直接挤爆。
 
-iztro 的运限**算术是对的** —— 独立实现的古籍规则与它对拍 **303,582 项断言、0 处不符**。需要包装的是它的**接口**：
+iztro 的运限**算术是对的** —— 独立实现的古籍规则与它对拍一致。CI 门禁套件每次运行都会核对 200 张种子盘 × 4 个目标时刻；一次性的全量人工扫描（`bun run tests/horoscope-parity-reference.mjs 800 10`）走得更远，对拍 **303,582 项断言、0 处不符**。需要包装的是它的**接口**：
 
 - 让本命盘年干支正确的那个绕过，会静默毒化所有按年龄推的作用域，因为虚岁 = `目标农历年 − 喂入农历年 + 1`。已按作用域分别补偿 —— 流月/流日/流时**永远取真实目标**，因为流日按儒略日推、不是 60 年周期。
 - `horoscopeDivide` 被锁死：iztro 的 `'exact'` 下，流年按立春分界而虚岁/大限/小限按正月初一分界，每年有六天一份响应自相矛盾。
@@ -140,7 +141,7 @@ iztro 的运限**算术是对的** —— 独立实现的古籍规则与它对�
 
 ## 🧪 验证
 
-`bun test` —— **216 个测试**，其中包括：
+`bun test` —— 以下测试全部通过，其中包括：
 
 - 一套**独立实现的古籍安星诀**，与 iztro 对拍数百张种子随机盘、约 18,000 项断言。这是钉死引擎的东西：上游任何一颗星的安放变了，测试就会红。
 - 立春边界逐时辰扫描，断言年干支**必须且只能在真实立春时刻翻一次** —— Z1 的回归防线。
