@@ -1,17 +1,17 @@
 /**
- * 运限（horoscope）独立古籍对拍脚本 —— docs/parity-reference.mjs 的姊妹篇。
+ * 运限（horoscope）独立古籍对拍脚本 —— tests/parity-reference.mjs 的姊妹篇。
  *
  * 覆盖：大限 / 童限 / 小限 / 流年 / 流月 / 流日 / 流时，各自的宫位、干支、
  * 十二宫名旋转、运四化、十条运曜（禄羊陀魁钺昌曲马鸾喜），以及流年专属的
  * 年解 / 岁前十二神 / 将前十二神。
  *
- * 独立性：安星常数原样抄自 docs/parity-reference.mjs（已验证 50,104 断言 0 不符）；
+ * 独立性：安星常数原样抄自 tests/parity-reference.mjs（已验证 50,104 断言 0 不符）；
  * 新增的表（流昌流曲、小限起宫、童限、岁前/将前十二神）来自古籍口诀，未读 iztro 源码。
  * 日柱干支用 JDN + 49 (mod 60)，与 @openfate/bazi-engine（lunar-javascript）在
  * 1800–2100 抽样完全一致，且 1949-10-01 = 甲子日、1900-01-01 = 甲戌日 校验通过 ——
  * 与 iztro 无共享代码路径。
  *
- * 用法：bun run docs/horoscope-parity-reference.mjs [charts=300] [targetsPerChart=6]
+ * 用法：bun run tests/horoscope-parity-reference.mjs [charts=300] [targetsPerChart=6]
  */
 import { astro } from 'iztro';
 import { getTotalDaysOfLunarMonth, lunar2solar, solar2lunar } from 'lunar-lite';

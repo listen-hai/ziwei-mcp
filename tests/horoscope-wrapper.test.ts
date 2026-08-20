@@ -6,10 +6,10 @@ import { parseZiweiInput } from '../src/schemas/input';
 import { daysInLunarMonth, makeRandom } from './ziwei-rules';
 // The 运限 oracle: the same frozen, independently-derived classical implementation
 // tests/horoscope-parity.test.ts gates on (303,582 assertions / 0 mismatches vs
-// iztro 2.6.0 — see docs/horoscope-parity-reference.mjs's own header). Imported,
+// iztro 2.6.0 — see tests/horoscope-parity-reference.mjs's own header). Imported,
 // never transplanted or re-derived: its whole value is that it shares no code path
 // with src/ or with iztro's horoscope().
-import { expectHoroscope } from '../docs/horoscope-parity-reference.mjs';
+import { expectHoroscope } from './horoscope-parity-reference.mjs';
 
 /**
  * tests/horoscope.test.ts (written by the implementer) covers the same five defects;

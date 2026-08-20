@@ -83,7 +83,7 @@ const BRANCHES = ['子', '丑', '寅', '卯', '辰', '巳', '午', '未', '申',
  * Sexagenary (ganzhi) pair for iztro/lunar-lite's *numbered* lunar year (e.g. lunar
  * year 2000 -> 庚辰), i.e. the ganzhi you'd get under yearDivide:'lunar_new_year'
  * (正月初一 boundary). Anchored at 1984 = 甲子, matching iztro's own lunar tables —
- * verified against docs/parity-reference.mjs (0 mismatches across 800 random charts).
+ * verified against tests/parity-reference.mjs (0 mismatches across 800 random charts).
  *
  * This is also the formula used to test candidate "feed years" in
  * lunarYearForGanZhi below: two years 60 apart always share a ganzhi.

@@ -7,9 +7,9 @@ import { parseZiweiHoroscopeInput, ZiweiHoroscopeInputSchema } from '../src/sche
 import { parseZiweiInput } from '../src/schemas/input';
 import { daysInLunarMonth, makeRandom } from './ziwei-rules';
 // The 运限 oracle is the same permanent asset tests/horoscope-parity.test.ts uses — see
-// that file and docs/horoscope-parity-reference.mjs's own header. Imported, not
+// that file and tests/horoscope-parity-reference.mjs's own header. Imported, not
 // transplanted, for the same reason: it must stay independent of src/.
-import { expectHoroscope } from '../docs/horoscope-parity-reference.mjs';
+import { expectHoroscope } from './horoscope-parity-reference.mjs';
 
 /**
  * Tests for the calculate_ziwei_horoscope wrapper — specifically the five interface

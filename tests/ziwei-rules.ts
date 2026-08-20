@@ -1,6 +1,6 @@
 /**
  * Independent implementation of the classical Zi Wei Dou Shu 安星诀 (star-placement
- * rules), transplanted from docs/parity-reference.mjs — verified ground truth
+ * rules), transplanted from tests/parity-reference.mjs — verified ground truth
  * (50,104 assertions / 800 charts / 0 mismatches against iztro 2.6.0).
  *
  * This is the suite's ORACLE. It must never be derived from iztro or from src/:
@@ -103,7 +103,7 @@ export function findStarTrimmed(chart: { palaces: Array<{ branch: string; majorS
 
 export const FIVE_CLASS_LABEL: Record<number, string> = { 2: '水二局', 3: '木三局', 4: '金四局', 5: '土五局', 6: '火六局' };
 
-/** Deterministic LCG — same generator and seed pattern as docs/parity-reference.mjs. */
+/** Deterministic LCG — same generator and seed pattern as tests/parity-reference.mjs. */
 export function makeRandom(seed: number) {
   let s = seed;
   return () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return s / 0x7fffffff; };

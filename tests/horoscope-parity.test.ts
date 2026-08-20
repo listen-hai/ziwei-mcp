@@ -4,17 +4,17 @@ import { solar2lunar } from 'lunar-lite';
 import { daysInLunarMonth, makeRandom } from './ziwei-rules';
 // The 运限 oracle is an independent classical implementation; see the header of that file.
 // It is imported rather than transplanted because it is pure and has no `src/` coupling.
-import { expectHoroscope } from '../docs/horoscope-parity-reference.mjs';
+import { expectHoroscope } from './horoscope-parity-reference.mjs';
 
 /**
  * §12 运限 parity gate — 大限/童限/小限/流年/流月/流日/流时, their 干支, 十二宫名 rotation,
  * 运四化, the ten 运曜, plus 年解 / 岁前十二神 / 将前十二神.
  *
  * Baseline: 800 charts x 10 targets = 303,582 assertions, 0 mismatches (iztro 2.6.0).
- * Full sweep: `bun run docs/horoscope-parity-reference.mjs 800 10`
+ * Full sweep: `bun run tests/horoscope-parity-reference.mjs 800 10`
  *
  * Scope guards deliberately excluded here because iztro is *known wrong* there
- * (documented, with reproducers, in `bun run docs/horoscope-parity-reference.mjs edges`):
+ * (documented, with reproducers, in `bun run tests/horoscope-parity-reference.mjs edges`):
  *   - target lunar year < natal lunar year  → index -1 and untranslated i18n keys
  *   - target timeIndex 12 (晚子时)           → 日干支 advances, 流日宫位 does not
  */
