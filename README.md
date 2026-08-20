@@ -99,13 +99,13 @@ Requires `gender`, one of `solarDate`/`lunarDate`, one of `clockTime`/`shichen`,
 | `ageDivide` | `normal` (default) · `birthday` | 小限 boundary |
 | `dayDivide` | `current` (default) · `forward` | Whether 晚子时 (23:00–24:00) rolls to the next day |
 | `algorithm` | `default` (通行版) · `zhongzhou` (中州派) | Star-placement algorithm |
-| `astroType` | `heaven` · `earth` · `human` | 天/地/人盘, Zhongzhou school only |
+| `astroType` | `heaven` · `earth` · `human` | 天/地/人盘 — effective under either `algorithm`, not Zhongzhou-only |
 | `fixLeap` | boolean | Split leap months at the 15th |
 | `trueSolar` | boolean (default `true`) | Apply true solar time correction |
 | `mutagens` | `{ "甲": ["廉贞","破军","武曲","太阳"], … }` | Override 四化 per heavenly stem |
 | `brightness` | `{ "紫微": ["庙","旺",…], … }` | Override star brightness |
 
-> `algorithm: 'zhongzhou'` and `astroType` are passed through but **not verified** against Zhongzhou-school sources — they are exposed for completeness, not endorsed.
+> `algorithm: 'zhongzhou'`'s behavior has been exhaustively mapped against iztro (see `docs/zhongzhou-findings.md`), but only compared to secondhand online sources for Zhongzhou-school (王亭之) doctrine, not the original texts. One known contradiction: it does **not** change 四化 (庚/壬 stay on the textbook table, not the documented Zhongzhou one) — use `config.mutagens` if you need Zhongzhou 四化. `astroType:'earth'/'human'` combined with `algorithm:'default'` is rejected outright (not just unverified): it would return a chart whose 命主 contradicts its own 命宫.
 
 **Not supported: unknown birth time.** 命宫, 身宫, 文昌/文曲, 火星/铃星 and 地空/地劫 all depend on the hour. Without it there is no chart, so the request is rejected rather than answered with a partial one. `shichen` is supported; when true-solar correction pushes a spoken shichen across a boundary, the response carries `shichenAmbiguity` with the candidate `timeIndex` values instead of a confidently wrong single chart.
 

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'bun:test';
 import { calculateZiweiChart } from '../src/core/chart';
 import { ZiweiInputSchema, parseZiweiInput } from '../src/schemas/input';
+import { ZiweiHoroscopeInputSchema } from '../src/schemas/horoscope';
 import starZhCN from 'iztro/lib/i18n/locales/zh-CN/star';
 import { ganZhiOfLunarYear, lunarYearForGanZhi } from '../src/core/lunar';
 import { resolveLocation, lookupCity } from '../src/geo/resolver';
@@ -495,6 +496,34 @@ describe('8.2 Input validation matrix', () => {
     const noTime = ZiweiInputSchema.safeParse({ place: 'Beijing', solarDate: { year: 2000, month: 1, day: 1 }, gender: 'male' });
     expect(noTime.success).toBe(false);
     expect(noTime.error!.issues.map(i => i.message).join(' ')).toContain('unknown birth time');
+  });
+
+  /**
+   * docs/zhongzhou-findings.md 结论 D3: astroType:'earth'/'human' re-seats 命宫 without
+   * recomputing 命主, which under algorithm:'default' is derived from the life-palace
+   * branch — so the returned 命主 contradicts the very 命宫 it's returned alongside.
+   * Reachable under this project's own defaults (algorithm defaults to 'default').
+   * zhongzhou+earth/human is unaffected (命主 there derives from the year branch,
+   * which doesn't move) and stays accepted. Scoped to the natal tool only, mirroring
+   * ageDivide:'birthday' (src/schemas/horoscope.ts) — 命主/身主 never appear in
+   * calculate_ziwei_horoscope's own output, so the contradiction is dormant there.
+   */
+  it('rejects algorithm:\'default\' + astroType:\'earth\'/\'human\' (self-contradictory 命主), natal tool only', () => {
+    const earthDefault = ZiweiInputSchema.safeParse({ ...validBase, astroType: 'earth' });
+    expect(earthDefault.success).toBe(false);
+    if (!earthDefault.success) {
+      expect(earthDefault.error.issues.map(i => i.message).join(' ')).toContain('命主');
+    }
+
+    expect(ZiweiInputSchema.safeParse({ ...validBase, algorithm: 'default', astroType: 'human' }).success).toBe(false);
+
+    // zhongzhou+earth stays self-consistent (命主 derives from the year branch there) and accepted.
+    expect(ZiweiInputSchema.safeParse({ ...validBase, algorithm: 'zhongzhou', astroType: 'earth' }).success).toBe(true);
+    // heaven (the default astroType) never re-seats anything, so it's fine under 'default' too.
+    expect(ZiweiInputSchema.safeParse({ ...validBase, algorithm: 'default', astroType: 'heaven' }).success).toBe(true);
+
+    // Horoscope tool: same combination is still accepted — 命主/身主 don't surface in its output.
+    expect(ZiweiHoroscopeInputSchema.safeParse({ ...validBase, astroType: 'earth' }).success).toBe(true);
   });
 });
 

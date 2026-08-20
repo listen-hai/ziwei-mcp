@@ -157,13 +157,13 @@ export function createZiweiMcpServer(): Server {
             type: 'string',
             enum: ['default', 'zhongzhou'],
             default: 'default',
-            description: 'Star-placement algorithm: default (通行版) or zhongzhou (中州派, unverified against an independent source)',
+            description: 'Star-placement algorithm: default (通行版) or zhongzhou (中州派). Verified exhaustively (docs/zhongzhou-findings.md): zhongzhou does NOT change 四化 — e.g. 庚 stays 禄:太阳 权:武曲 科:太阴 忌:天同 and 壬 stays 禄:天梁 权:紫微 科:左辅 忌:武曲, not the documented 中州派 阳武府同 / 梁紫府武 (天府化科; 中州派 also holds 左辅/右弼 take no 四化 at all, which iztro\'s 壬科:左辅 contradicts). zhongzhou only changes 杂曜 (drops 截路/空亡, adds 截空/劫杀/大耗/龙德, swaps 天伤/天使 for 阴年男/阳年女) and how 命主 is derived (年支 instead of 命宫支). If you need 中州派 四化, supply your own table via `config.mutagens`.',
           },
           astroType: {
             type: 'string',
             enum: ['heaven', 'earth', 'human'],
             default: 'heaven',
-            description: 'Zhongzhou-school chart type (天盘/地盘/人盘); only meaningful with algorithm: "zhongzhou"',
+            description: 'Zhongzhou-school chart type (天盘/地盘/人盘). Effective under either `algorithm` value — verified identical whether `algorithm` is \'default\' or \'zhongzhou\'; NOT limited to zhongzhou despite the name. \'earth\'/\'human\' re-seat 命宫 (to 身宫 / 福德宫) and, with it, 五行局, the twelve palace names, the 14 major stars, 长生十二神, and the decadal (大限) sequence. `earthlyBranchOfBodyPalace`, 天寿, and 命主/身主 keep their 天盘 values — they are NOT re-seated. Under algorithm:\'default\' this would leave 命主 contradicting the returned 命宫, so calculate_ziwei rejects astroType:\'earth\'/\'human\' combined with algorithm:\'default\'; calculate_ziwei_horoscope still accepts it since 命主/身主 never appear in its output.',
           },
           fixLeap: {
             type: 'boolean',

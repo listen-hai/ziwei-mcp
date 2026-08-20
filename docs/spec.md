@@ -384,8 +384,8 @@ const PALACES=['命宫','兄弟','夫妻','子女','财帛','疾厄','迁移','�
 | `horoscopeDivide` | 同上 | **恒设 normal**，同上 |
 | `ageDivide` | `normal` 自然年 / `birthday` 生日 | 透传 |
 | `dayDivide` | `current` 晚子时算当日 / `forward` 算来日 | 透传，同时用于 `timeIndex` 推导 |
-| `algorithm` | `default` 通行版 / `zhongzhou` 中州派 | 透传（中州派正确性未验证） |
-| `astroType` | `heaven`/`earth`/`human` | 透传（中州派专用，未验证） |
+| `algorithm` | `default` 通行版 / `zhongzhou` 中州派 | 透传（zhongzhou 不改四化，已知与文献不符，见 §12 与 `docs/zhongzhou-findings.md`） |
+| `astroType` | `heaven`/`earth`/`human` | 透传（两种 `algorithm` 下效果相同，非中州派专用）；`default`+`earth`/`human` 因命主不自洽被拒绝，见 §12 |
 | `mutagens` | 逐干覆盖四化 | 透传 |
 | `brightness` | 逐星覆盖亮度 | 透传 |
 | `fixLeap` | 闰月以十五日为界修正 | 透传（实测：闰四月二十 + fixLeap 会改命宫、五行局、命主；初十不变） |
@@ -424,7 +424,7 @@ const PALACES=['命宫','兄弟','夫妻','子女','财帛','疾厄','迁移','�
 
 实现时需要额外小心，因为我没有独立基准：
 
-- **中州派**（`algorithm:'zhongzhou'`、`astroType`）—— 只确认「有效果」，未验证是否符合中州派规范
+- **中州派**：行为已穷举（见 `docs/zhongzhou-findings.md`），但与中州派规范只做到网络二手比对，未经原著验证；已知四化与文献不符
 - **杂耀**：三台八座、恩光天贵、台辅封诰等，规则简单但数量多，未逐项对拍
 - **流耀与运限接口**（`horoscope()`、大限/流年/流月/流日的动态星曜）—— 一项未碰。若要做运限分析，这是最大的未验证面，建议单独立一轮对拍
 - **火铃流派**：对拍用的是通行版，iztro 与之一致；其他流派未验证

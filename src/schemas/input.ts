@@ -208,8 +208,8 @@ export const ZiweiInputObjectSchema = z.object({
   horoscopeDivide: z.enum(['lichun', 'lunar_new_year']).optional().default(ZIWEI_DEFAULTS.horoscopeDivide).describe('Same boundary convention as yearDivide, but for horoscope (运限) year rollover — the calculate_ziwei_horoscope tool determines the 流年 boundary using this convention (see that tool\'s own docs).'),
   ageDivide: z.enum(['normal', 'birthday']).optional().default(ZIWEI_DEFAULTS.ageDivide).describe('Small-limit (小限) boundary: normal (natural year) or birthday. Note: calculate_ziwei_horoscope rejects "birthday" outright (it is the only tool where 小限 is actually surfaced, and iztro\'s "birthday" mode is documented as 以生日为界 but actually flips on the 1st of the lunar month AFTER the birth month, ignoring the birth day entirely — see that tool\'s own docs). This natal tool still accepts it since 小限 has no effect on any natal-chart output field.'),
   dayDivide: z.enum(['current', 'forward']).optional().default(ZIWEI_DEFAULTS.dayDivide).describe('Late-Zi-hour (晚子时, 23:00-24:00) convention: current (default, counts as the same day) or forward (counts as the next day)'),
-  algorithm: z.enum(['default', 'zhongzhou']).optional().default(ZIWEI_DEFAULTS.algorithm).describe('Star-placement algorithm: default (通行版) or zhongzhou (中州派, unverified against an independent source — see project spec §12)'),
-  astroType: z.enum(['heaven', 'earth', 'human']).optional().default(ZIWEI_DEFAULTS.astroType).describe('Zhongzhou-school chart type (天盘/地盘/人盘); only meaningful with algorithm: "zhongzhou"'),
+  algorithm: z.enum(['default', 'zhongzhou']).optional().default(ZIWEI_DEFAULTS.algorithm).describe('Star-placement algorithm: default (通行版) or zhongzhou (中州派). Verified exhaustively (docs/zhongzhou-findings.md): zhongzhou does NOT change 四化 — e.g. 庚 stays 禄:太阳 权:武曲 科:太阴 忌:天同 and 壬 stays 禄:天梁 权:紫微 科:左辅 忌:武曲, not the documented 中州派 阳武府同 / 梁紫府武 (天府化科; 中州派 also holds 左辅/右弼 take no 四化 at all, which iztro\'s 壬科:左辅 contradicts). zhongzhou only changes 杂曜 (drops 截路/空亡, adds 截空/劫杀/大耗/龙德, swaps 天伤/天使 for 阴年男/阳年女) and how 命主 is derived (年支 instead of 命宫支). If you need 中州派 四化, supply your own table via `config.mutagens`.'),
+  astroType: z.enum(['heaven', 'earth', 'human']).optional().default(ZIWEI_DEFAULTS.astroType).describe('Zhongzhou-school chart type (天盘/地盘/人盘). Effective under either `algorithm` value — verified identical whether `algorithm` is \'default\' or \'zhongzhou\'; NOT limited to zhongzhou despite the name. \'earth\'/\'human\' re-seat 命宫 (to 身宫 / 福德宫) and, with it, 五行局, the twelve palace names, the 14 major stars, 长生十二神, and the decadal (大限) sequence. `earthlyBranchOfBodyPalace`, 天寿, and 命主/身主 keep their 天盘 values — they are NOT re-seated. Under algorithm:\'default\' this would leave 命主 contradicting the returned 命宫, so calculate_ziwei rejects astroType:\'earth\'/\'human\' combined with algorithm:\'default\' (see the error message for the fix); calculate_ziwei_horoscope still accepts it since 命主/身主 never appear in its output.'),
   fixLeap: z.boolean().optional().default(ZIWEI_DEFAULTS.fixLeap).describe('Whether to fix leap-month boundaries at the 15th day (闰月十五日为界修正)'),
   trueSolar: z.boolean().optional().default(ZIWEI_DEFAULTS.trueSolar).describe('Whether to apply True Solar Time correction (default true)'),
 
@@ -257,7 +257,29 @@ export function withBirthInputRefinements<T extends z.ZodTypeAny>(schema: T) {
   );
 }
 
-export const ZiweiInputSchema = withBirthInputRefinements(ZiweiInputObjectSchema);
+/**
+ * docs/zhongzhou-findings.md 结论 D3: astroType:'earth'/'human' re-seats 命宫 (to
+ * 身宫 / 福德宫) without recomputing 命主 (soul), which under algorithm:'default' is
+ * derived from the life-palace branch — so the returned 命主 contradicts the very
+ * 命宫 it's returned alongside. Reachable under this project's own defaults, since
+ * `algorithm` defaults to 'default'. zhongzhou+earth/human is unaffected (命主 there
+ * derives from the year branch, which the re-seat doesn't move) and stays accepted.
+ *
+ * Scoped to the natal tool only (chained here, not inside withBirthInputRefinements),
+ * mirroring how ageDivide:'birthday' is rejected only on ZiweiHoroscopeInputSchema
+ * (src/schemas/horoscope.ts) because 小限 only surfaces there: 命主/身主 only ever
+ * appear in calculate_ziwei's own output (src/core/output.ts), never in
+ * calculate_ziwei_horoscope's (src/types.ts's ZiweiHoroscopeResult has no
+ * soul/body field), so the contradiction is dormant on the horoscope tool and would
+ * be an over-rejection there.
+ */
+export const ZiweiInputSchema = withBirthInputRefinements(ZiweiInputObjectSchema).refine(
+  data => !(data.algorithm === 'default' && data.astroType !== 'heaven'),
+  {
+    message: 'algorithm:\'default\' combined with astroType:\'earth\' or \'human\' is rejected: astroType re-seats 命宫 (life palace) to 身宫 (earth) or 福德宫 (human), but 命主 (soul) is not recomputed for the new palace — under algorithm:\'default\', 命主 is derived from the life-palace branch, so the returned 命主 would contradict the 命宫 it\'s returned alongside (verified — see docs/zhongzhou-findings.md 结论 D3). Use algorithm:\'zhongzhou\' with this astroType instead (its 命主 derives from the year branch, unaffected by the re-seat), or leave astroType at \'heaven\' (the default).',
+    path: ['astroType'],
+  }
+);
 
 export const LookupLocationSchema = z.object({
   query: z.string().min(1, 'Search query cannot be empty').max(PLACE_MAX, `query must be ${PLACE_MAX} characters or fewer.`).describe('City name in English, e.g. "Tokyo", "London", "San Francisco"'),

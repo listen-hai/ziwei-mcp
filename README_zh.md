@@ -98,13 +98,13 @@ npx -y @lhk714/ziwei-mcp
 | `ageDivide` | `normal`（默认）· `birthday` | 小限分界 |
 | `dayDivide` | `current`（默认）· `forward` | 晚子时（23:00–24:00）是否算次日 |
 | `algorithm` | `default`（通行版）· `zhongzhou`（中州派） | 安星算法 |
-| `astroType` | `heaven` · `earth` · `human` | 天/地/人盘，仅中州派有意义 |
+| `astroType` | `heaven` · `earth` · `human` | 天/地/人盘 —— 两种 `algorithm` 下效果相同，并非中州派专属 |
 | `fixLeap` | boolean | 闰月以十五日为界修正 |
 | `trueSolar` | boolean（默认 `true`） | 是否应用真太阳时修正 |
 | `mutagens` | `{ "甲": ["廉贞","破军","武曲","太阳"], … }` | 按天干覆盖四化 |
 | `brightness` | `{ "紫微": ["庙","旺",…], … }` | 覆盖星曜亮度 |
 
-> `algorithm: 'zhongzhou'` 与 `astroType` 仅做透传，**未对照中州派典籍验证**；暴露出来是为了完整，不代表背书。
+> `algorithm: 'zhongzhou'` 的行为已对 iztro 穷举核查（见 `docs/zhongzhou-findings.md`），但与中州派（王亭之）规范只做到网络二手比对，未经原著验证。已知一处与文献不符：**它不改变四化**（庚、壬干仍是通行版的四化，不是文献所载的中州派版本）——需要中州派四化请用 `config.mutagens` 自行覆盖。`astroType:'earth'/'human'` 搭配 `algorithm:'default'` 会被直接拒绝（不只是「未验证」）：这个组合会返回一张命主与命宫自相矛盾的盘。
 
 **不支持「时辰不详」。** 命宫、身宫、文昌文曲、火星铃星、地空地劫全部依赖时辰，没有时辰就没有盘 —— 因此直接拒绝，而不是给一张残盘。`shichen`（口传时辰）是支持的；当真太阳时修正把口述时辰推出边界时，响应会带上 `shichenAmbiguity` 与候选 `timeIndex`，而不是给一张假装确定的盘。
 
