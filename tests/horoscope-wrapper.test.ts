@@ -39,7 +39,13 @@ import { expectHoroscope } from './horoscope-parity-reference.mjs';
  * below, where it is the subject rather than a confound.
  */
 
-const FRAME = { timezone: 'Etc/GMT-8', longitude: 120, trueSolar: false } as const;
+// This whole file audits the yearDivide/horoscopeDivide:'lichun' machinery (the ±60/±1
+// feed-year compensation and the 立春↔正月初一 window) — 0.2.0's default is
+// 'lunar_new_year' (see README's Conventions table / docs/spec.md §6), so FRAME pins
+// both explicitly to keep every test in this file exercising what it was written to
+// exercise. Individual calls that need to compare against the OTHER convention already
+// override with an explicit `horoscopeDivide: 'lunar_new_year'` per-call.
+const FRAME = { timezone: 'Etc/GMT-8', longitude: 120, trueSolar: false, yearDivide: 'lichun', horoscopeDivide: 'lichun' } as const;
 const H = (o: Record<string, unknown>) => calculateZiweiHoroscope(parseZiweiHoroscopeInput(o));
 const N = (o: Record<string, unknown>) => calculateZiweiChart(parseZiweiInput(o));
 /** Same request minus the horoscope-only `target` — the natal schema is `.strict()`. */
@@ -761,9 +767,11 @@ describe('运限 audit: 立春-window birth with a target in its own lunar year 
 // Differential sweep
 // ════════════════════════════════════════════════════════════════════════════════
 describe('运限 audit: differential sweep vs the independent oracle', () => {
-  it('matches the oracle across seeded births x targets driven through the FULL public input (not raw timeIndexes), with yearDivide left at its lichun default', () => {
+  it('matches the oracle across seeded births x targets driven through the FULL public input (not raw timeIndexes), with yearDivide pinned to lichun', () => {
     // Deliberately different from the implementer's own sweep in one decisive way:
-    // yearDivide stays at its 'lichun' DEFAULT, so births landing in the 立春↔正月初一
+    // yearDivide is pinned to 'lichun' via FRAME (0.2.0's own default is
+    // 'lunar_new_year' — see README's Conventions table / docs/spec.md §6), so births
+    // landing in the 立春↔正月初一
     // window really do get a shifted feed year and the compensation is exercised in
     // the bulk of the sweep, not only at hand-picked fixtures. horoscopeDivide is
     // pinned to 'lunar_new_year' — and ONLY that — because the oracle divides 流年 at
@@ -1184,8 +1192,8 @@ describe('运限 audit: output trimming (spec §7 discipline) — nothing from i
     expect(res.diagnostics.engineInfo.iztro).toBe('2.6.0');
     expect(res.diagnostics.engineInfo.schemaVersion).toBe('1.0.0');
     expect(res.diagnostics.convention).toEqual({
-      horoscopeDivide: 'lichun', ageDivide: 'normal', dayDivide: 'current',
-      algorithm: 'default', astroType: 'heaven', fixLeap: false, trueSolar: false,
+      horoscopeDivide: 'lichun', ageDivide: 'normal', dayDivide: 'forward',
+      algorithm: 'default', astroType: 'heaven', fixLeap: true, trueSolar: false,
     });
     expect(res.diagnostics.locationSource).toBe('caller_supplied');
   });

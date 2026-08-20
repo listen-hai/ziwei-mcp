@@ -59,10 +59,14 @@ describe('MCP tools/list', () => {
 
 describe('MCP tools/call happy paths', () => {
   it('calculates a chart from a solarDate', async () => {
+    // This fixture straddles 立春 2024 (same birth as golden.test.ts's G2) —
+    // pinned to yearDivide:'lichun' explicitly so this MCP-wire smoke test keeps
+    // its expected values (0.2.0 default is 'lunar_new_year').
     const res = await call('calculate_ziwei', {
       place: 'Tacoma, WA',
       solarDate: { year: 2024, month: 2, day: 4 },
       clockTime: { hour: 8, minute: 0 },
+      yearDivide: 'lichun',
       gender: 'male',
     });
     expect(res.isError).toBeFalsy();
@@ -96,8 +100,8 @@ describe('MCP tools/call happy paths', () => {
     });
     const chart = JSON.parse(res.content[0].text);
     expect(chart.diagnostics.convention).toEqual({
-      yearDivide: 'lichun', horoscopeDivide: 'lichun', ageDivide: 'normal', dayDivide: 'current',
-      algorithm: 'default', astroType: 'heaven', fixLeap: false, trueSolar: true,
+      yearDivide: 'lunar_new_year', horoscopeDivide: 'lunar_new_year', ageDivide: 'normal', dayDivide: 'forward',
+      algorithm: 'default', astroType: 'heaven', fixLeap: true, trueSolar: true,
     });
   });
 
@@ -236,7 +240,9 @@ describe('MCP calculate_ziwei_horoscope', () => {
     expect(Object.keys(payload).sort()).toEqual(['age', 'daily', 'decadal', 'diagnostics', 'hourly', 'monthly', 'yearly']);
     expect(payload.age.nominalAge).toBe(36);
     expect(payload.yearly.stem + payload.yearly.branch).toBe('乙巳');
-    expect(payload.diagnostics.convention.horoscopeDivide).toBe('lichun');
+    // Birth/target are both deep mid-year (no 立春/正月初一 boundary sensitivity) —
+    // this assertion is purely an echo check of the 0.2.0 default.
+    expect(payload.diagnostics.convention.horoscopeDivide).toBe('lunar_new_year');
     expect(payload.diagnostics.engineInfo.iztro).toBe('2.6.0');
   });
 

@@ -24,7 +24,8 @@ Birth Wall Clock + IANA Timezone  (1990-06-15 20:00 America/Los_Angeles)
             ▼                           ▼
    【Axis A: true UTC instant】   【Axis B: local true solar time】
      decides the year ganzhi        longitude + Meeus EoT − DST
-     at the exact 立春 moment       decides lunar date + timeIndex
+    (正月初一 by default, or         decides lunar date + timeIndex
+     the exact 立春 instant)
             │                           │
             ▼                           ▼
         year ganzhi  ───────────►  iztro star placement
@@ -36,9 +37,9 @@ Birth Wall Clock + IANA Timezone  (1990-06-15 20:00 America/Los_Angeles)
 Zi Wei couples time to the chart in two different ways, and conflating them is the single most common source of wrong charts:
 
 - The **hour, day and month** come from local true solar time at the birthplace (Axis B) — they decide the 命宫/身宫, the 紫微 and 天府 series, and 昌曲/空劫/火铃.
-- The **year ganzhi** comes from the true 立春 instant in real physical time (Axis A) — it decides the 宫干 (五虎遁), all 四化, every year-based star, and the 大限 sequence.
+- The **year ganzhi** comes from the resolved birth instant in real physical time (Axis A) — it decides the 宫干 (五虎遁), all 四化, every year-based star, and the 大限 sequence. By default the boundary is 正月初一 (the mainstream 紫微斗数 convention — see `yearDivide` below); the true 立春 instant is available as an opt-in for the 八字/子平术-aligned boundary.
 
-A birth two hours before 立春 in Los Angeles is *after* 立春 in Beijing. Only one of those is the year ganzhi, and getting it wrong invalidates the whole chart, not part of it.
+A birth two hours before 立春 in Los Angeles is *after* 立春 in Beijing. When `yearDivide:'lichun'` is in effect, only one of those is the year ganzhi, and getting it wrong invalidates the whole chart, not part of it.
 
 ### Known engine bugs this server works around
 
@@ -46,7 +47,7 @@ Both were reproduced against `iztro@2.6.0` and are covered by regression tests:
 
 | | Problem | Handling |
 |---|---|---|
-| **Z1** | `yearDivide:'exact'` divides the year by *calendar date*, not the 立春 *instant*. Anyone born on 立春 day before the actual moment (2025's was 22:10) gets the next year's ganzhi — and iztro's own year and month pillars contradict each other. | `yearDivide` is locked to `'normal'`; this server determines the ganzhi itself on Axis A and feeds iztro a lunar year that reproduces it. Reported as `diagnostics.yearDivideNote`. |
+| **Z1** | iztro's own `yearDivide:'exact'` divides the year by *calendar date*, not the 立春 *instant* — anyone born on 立春 day before the actual moment (2025's was 22:10) gets the next year's ganzhi, and iztro's own year and month pillars contradict each other. This isn't an iztro-only problem: essentially every downstream tool inherits it, and the one competitor that exposes a 立春 option at all just passes iztro's date-only `'exact'` through under a different label. | This server's own `yearDivide:'lichun'` determines the ganzhi independently on Axis A (the true UTC instant) and feeds iztro a lunar year that reproduces it — as far as this project has found, the only *correct* 立春 implementation in the ecosystem, not merely the only one without the defect. It is opt-in (default is `yearDivide:'lunar_new_year'`, 正月初一 — see Conventions below). Reported as `diagnostics.yearDivideNote`. |
 | **Z2** | Under `dayDivide:'forward'` the calculation shifts to the next day but the reported `lunarDate` does not. | iztro's `lunarDate`/`chineseDate`/`solarDate` are never passed through; the lunar date is computed in this layer. |
 
 Two upstream calendar defects are also worked around: a leap month that does not exist is rejected rather than silently charted as the ordinary month, and 闰月三十 births (17 such days between 1900 and 2100, e.g. 2017-08-21) build correctly instead of throwing.
@@ -78,7 +79,7 @@ npx -y @lhk714/ziwei-mcp@latest
 }
 ```
 
-> `@latest` re-resolves from the registry on every client launch — that's deliberate, so you always get fixes — but it costs a network round-trip at startup and fails hard offline. For an offline or latency-sensitive setup, pin an exact version instead, e.g. `@lhk714/ziwei-mcp@0.1.1`.
+> `@latest` re-resolves from the registry on every client launch — that's deliberate, so you always get fixes — but it costs a network round-trip at startup and fails hard offline. For an offline or latency-sensitive setup, pin an exact version instead, e.g. `@lhk714/ziwei-mcp@0.2.0`.
 
 ---
 
@@ -96,16 +97,18 @@ Requires `gender`, one of `solarDate`/`lunarDate`, one of `clockTime`/`shichen`,
 
 | Parameter | Values | Meaning |
 |---|---|---|
-| `yearDivide` | `lichun` (default) · `lunar_new_year` | Year-ganzhi boundary |
+| `yearDivide` | `lunar_new_year` (default, 正月初一) · `lichun` | Year-ganzhi boundary — 正月初一 is the mainstream 紫微斗数 convention; `lichun` (the true 立春 instant) is 八字/子平术's own boundary and is offered as a correct, opt-in alternative — see Z1 above |
 | `ageDivide` | `normal` (default) · `birthday` | 小限 boundary |
-| `dayDivide` | `current` (default) · `forward` | Whether 晚子时 (23:00–24:00) rolls to the next day |
+| `dayDivide` | `forward` (default) · `current` | Whether 晚子时 (23:00–24:00) rolls to the next day — `forward` matches iztro's own factory default (and 测测/ziwei.pub) |
 | `algorithm` | `default` (通行版) · `zhongzhou` (中州派) | Star-placement algorithm |
 | `astroType` | `heaven` · `earth` · `human` | 天/地/人盘 — effective under either `algorithm`, not Zhongzhou-only |
-| `fixLeap` | boolean | Split leap months at the 15th |
-| `trueSolar` | boolean (default `true`) | Apply true solar time correction |
+| `fixLeap` | boolean (default `true`) | Split leap months at the 15th (闰月十五日为界) — matches iztro's own factory default |
+| `trueSolar` | boolean (default `true`) | Apply true solar time correction. When the correction moves a birth across a 时辰 boundary, `diagnostics.trueSolarNote` names both the corrected and uncorrected shichen, the correction size, and the classical caution 「不准但用三时断，时有差误不可凭」 |
 | `mutagens` | `{ "甲": ["廉贞","破军","武曲","太阳"], … }` | Override 四化 per heavenly stem |
 | `brightness` | `{ "紫微": ["庙","旺",…], … }` | Override star brightness |
 
+> Every convention default here was audited against the ecosystem (iztro's own factory defaults, 测测, ziwei.pub) as of 0.2.0. `dayDivide` and `fixLeap` previously diverged from iztro's own factory defaults by accident, not by deliberate school choice — that has been corrected. `yearDivide`/`horoscopeDivide` defaulting to `lunar_new_year` is the project owner's doctrinal ruling: 立春 belongs to 八字/子平术, not to this system's own star-placement apparatus. `yearDivide:'lichun'` remains fully supported — the Z1 machinery behind it is unchanged and still, as far as this project has found, the only *correct* 立春 implementation in the ecosystem.
+>
 > `algorithm: 'zhongzhou'`'s behavior has been exhaustively mapped against iztro, but only compared to secondhand online sources for Zhongzhou-school (王亭之) doctrine, not the original texts. One known contradiction: it does **not** change 四化 (庚/壬 stay on the textbook table, not the documented Zhongzhou one) — use `config.mutagens` if you need Zhongzhou 四化. `astroType:'earth'/'human'` combined with `algorithm:'default'` is rejected outright (not just unverified): it would return a chart whose 命主 contradicts its own 命宫.
 
 **Not supported: unknown birth time.** 命宫, 身宫, 文昌/文曲, 火星/铃星 and 地空/地劫 all depend on the hour. Without it there is no chart, so the request is rejected rather than answered with a partial one. `shichen` is supported; when true-solar correction pushes a spoken shichen across a boundary, the response carries `shichenAmbiguity` with the candidate `timeIndex` values instead of a confidently wrong single chart.
@@ -126,7 +129,7 @@ iztro's 运限 *arithmetic* is sound — an independent implementation of the cl
 - `ageDivide: 'birthday'` is **rejected** here: it flips on the 1st of the month *after* the birth month and ignores the birth day, so honouring it would silently mean something other than what it says.
 - Targets before the birth are rejected (iztro returned `index: -1` and untranslated i18n keys, silently), and a late-Zi target is normalized (`dayDivide` does not affect `horoscope()` at all).
 
-Age reckoning uses the 立春-designated birth year against a 正月初一 target axis. That asymmetry is a deliberate, documented convention choice, not an accident — the diagnostics report it, and the tests pin it.
+Under `yearDivide:'lichun'`, age reckoning uses the 立春-designated birth year against a 正月初一 target axis. That asymmetry is a deliberate, documented convention choice, not an accident — the diagnostics report it, and the tests pin it. (Under the default `yearDivide:'lunar_new_year'`, the birth side is simply the true lunar year — there is no asymmetry to reckon with.)
 
 ### 3. `lookup_location`
 

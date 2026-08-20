@@ -32,10 +32,13 @@ describe('运限 wrapper: defect 1 — feedYear ±60 compensation', () => {
     // below). The intentional +1 (2023 -> 2024, the lichun-window component) must
     // NOT be compensated — it is what makes the year ganzhi correct in the first
     // place, and letting 虚岁 move with it is what the lichun school means.
+    // This fixture's whole premise is the 立春-window feed-year shift (P2a/P2b) — pin
+    // yearDivide:'lichun' explicitly (0.2.0 default is 'lunar_new_year').
     const res = calculateZiweiHoroscope(parseZiweiHoroscopeInput({
       place: 'Beijing',
       solarDate: { year: 2024, month: 2, day: 9 },
       clockTime: { hour: 10, minute: 0 },
+      yearDivide: 'lichun',
       gender: 'male',
       target: { solarDate: { year: 2054, month: 6, day: 15 }, clockTime: { hour: 10, minute: 0 } },
     }));
@@ -90,7 +93,9 @@ describe('运限 wrapper: defect 2 — horoscopeDivide decoupling (立春↔正�
   const target = { solarDate: { year: 2024, month: 2, day: 6 }, clockTime: { hour: 10, minute: 0 } };
 
   it('determines 流年 independently on Axis A (lichun) rather than iztro\'s self-contradictory exact-boundary mode', () => {
-    const res = calculateZiweiHoroscope(parseZiweiHoroscopeInput({ ...birth, target }));
+    // Pins horoscopeDivide:'lichun' explicitly (0.2.0 default is 'lunar_new_year') —
+    // this test's whole point is exercising the 立春-window decoupling.
+    const res = calculateZiweiHoroscope(parseZiweiHoroscopeInput({ ...birth, horoscopeDivide: 'lichun', target }));
     expect(res.diagnostics.yearlyGanZhi).toBe('甲辰');
     expect(res.yearly.stem).toBe('甲');
     expect(res.yearly.branch).toBe('辰');

@@ -13,6 +13,10 @@ const chartBody = (r: ZiweiCalculationResult) => ({
 });
 
 describe('8.3 Z1 defence: year ganzhi depends on the UTC instant, never on the calendar date', () => {
+  // This whole describe block is the Z1 (立春-instant) regression guard — every case
+  // pins yearDivide:'lichun' explicitly (0.2.0 default is 'lunar_new_year'; see
+  // README's Conventions table / docs/spec.md §6) so it keeps exercising the Z1
+  // machinery it was written to test, not the new default boundary.
   /**
    * The single most important invariant in the project. iztro's own
    * `yearDivide:'exact'` divides the year by calendar DATE, so the same physical
@@ -32,7 +36,7 @@ describe('8.3 Z1 defence: year ganzhi depends on the UTC instant, never on the c
     ] as const;
 
     for (const { name, ...input } of cases) {
-      const res = chart({ ...input, gender: 'male' });
+      const res = chart({ ...input, yearDivide: 'lichun', gender: 'male' });
       expect(res.diagnostics.utcInstant, name).toBe('2024-02-04T16:00:00.000Z');
       // 立春 2024 = 2024-02-04 08:26:56 UTC, so every one of these is after it.
       expect(res.diagnostics.yearGanZhi, name).toBe('甲辰');
@@ -49,7 +53,7 @@ describe('8.3 Z1 defence: year ganzhi depends on the UTC instant, never on the c
     for (let hour = 0; hour < 24; hour++) {
       const res = chart({
         solarDate: { year: 2025, month: 2, day: 3 }, clockTime: { hour, minute: 30 },
-        timezone: 'Asia/Shanghai', longitude: 120, trueSolar: false, gender: 'male',
+        timezone: 'Asia/Shanghai', longitude: 120, trueSolar: false, yearDivide: 'lichun', gender: 'male',
       });
       seen.push({ hour, ganZhi: res.diagnostics.yearGanZhi });
     }
@@ -64,7 +68,7 @@ describe('8.3 Z1 defence: year ganzhi depends on the UTC instant, never on the c
     // ...and to the minute: 22:05 vs 22:15 straddles it.
     const at = (hour: number, minute: number) => chart({
       solarDate: { year: 2025, month: 2, day: 3 }, clockTime: { hour, minute },
-      timezone: 'Asia/Shanghai', longitude: 120, trueSolar: false, gender: 'male',
+      timezone: 'Asia/Shanghai', longitude: 120, trueSolar: false, yearDivide: 'lichun', gender: 'male',
     });
     expect(at(22, 5).diagnostics.yearGanZhi).toBe('甲辰');
     expect(at(22, 15).diagnostics.yearGanZhi).toBe('乙巳');
@@ -83,7 +87,7 @@ describe('8.3 Z1 defence: year ganzhi depends on the UTC instant, never on the c
     const seen = Array.from({ length: 24 }, (_, hour) =>
       chart({
         solarDate: { year: 2021, month: 2, day: 3 }, clockTime: { hour, minute: 30 },
-        timezone: 'Asia/Shanghai', longitude: 120, trueSolar: false, gender: 'male',
+        timezone: 'Asia/Shanghai', longitude: 120, trueSolar: false, yearDivide: 'lichun', gender: 'male',
       }).diagnostics.yearGanZhi
     );
     const flips = seen.filter((g, i) => i > 0 && g !== seen[i - 1]);
@@ -197,6 +201,53 @@ describe('8.3 timeIndex 0 (早子时) vs 12 (晚子时)', () => {
       expect(res.diagnostics.dayDivideNote).toBeUndefined();
       expect(res.diagnostics.starPlacementLunarDay).toBeUndefined();
     }
+  });
+});
+
+describe('trueSolarNote (0.2.0 spec item 4): True Solar Time disclosure', () => {
+  /**
+   * fires only when the correction actually moves the birth across a 时辰 (timeIndex)
+   * boundary relative to the uncorrected (DST-stripped only) civil clock — exactly the
+   * case where this chart can disagree with a tool that reads the plain civil clock.
+   * Same fixture as global_multiregion.test.ts's "Xinjiang large longitude shift"
+   * golden case (G4): civil 08:00 -> DST-stripped standard 07:00 (辰, timeIndex 4) ->
+   * true solar 04:50 (寅, timeIndex 2) — crosses two boundaries.
+   */
+  it('fires when the correction moves the birth across a 时辰 boundary, naming both shichen and the correction size', () => {
+    const res = chart({
+      solarDate: { year: 1990, month: 6, day: 15 }, clockTime: { hour: 8, minute: 0 },
+      timezone: 'Asia/Shanghai', longitude: 87.6168, gender: 'male',
+    });
+    expect(res.diagnostics.axisB_localTrueSolarTime).toBe('1990-06-15 04:50');
+    expect(res.lunar.timeIndex).toBe(2);
+    expect(res.diagnostics.trueSolarNote).toBeDefined();
+    // Names the true-solar shichen (寅, timeIndex 2) and the uncorrected one (辰, timeIndex 4).
+    expect(res.diagnostics.trueSolarNote).toContain('寅');
+    expect(res.diagnostics.trueSolarNote).toContain('timeIndex 2');
+    expect(res.diagnostics.trueSolarNote).toContain('辰');
+    expect(res.diagnostics.trueSolarNote).toContain('timeIndex 4');
+    // Correction size, and the project owner's classical caution.
+    expect(res.diagnostics.trueSolarNote).toMatch(/-?\d+(\.\d+)? minutes/);
+    expect(res.diagnostics.trueSolarNote).toContain('不准但用三时断，时有差误不可凭');
+  });
+
+  it('stays silent when the correction is too small to cross a 时辰 boundary', () => {
+    // G1 (golden.test.ts): Beijing standard, longitude close to the timezone meridian —
+    // civil 14:10 and true solar (~13:50-ish) both fall in 未 (timeIndex 7).
+    const res = chart({
+      solarDate: { year: 1998, month: 7, day: 31 }, clockTime: { hour: 14, minute: 10 },
+      timezone: 'Asia/Shanghai', longitude: 116.4074, gender: 'male',
+    });
+    expect(res.lunar.timeIndex).toBe(7);
+    expect(res.diagnostics.trueSolarNote).toBeUndefined();
+  });
+
+  it('never fires under trueSolar:false, however large the longitude offset (corrected === uncorrected by construction)', () => {
+    const res = chart({
+      solarDate: { year: 1990, month: 6, day: 15 }, clockTime: { hour: 8, minute: 0 },
+      timezone: 'Asia/Shanghai', longitude: 87.6168, trueSolar: false, gender: 'male',
+    });
+    expect(res.diagnostics.trueSolarNote).toBeUndefined();
   });
 });
 

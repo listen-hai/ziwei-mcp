@@ -69,11 +69,15 @@ describe('8.2 Golden cases G1-G5 (ported from bazi-mcp, rewritten in Ziwei terms
   // even though the lunar date is still 2023-12-25 — this is exactly the decoupling
   // spec §5 Z1 requires, and it forces feedYear (2024) away from lunar.year (2023).
   it('G2: Overseas 立春 boundary — year ganzhi and lunar year deliberately disagree', () => {
+    // This case's whole point is the 立春-instant boundary (spec §5 Z1) — pin
+    // yearDivide:'lichun' explicitly rather than relying on the default (0.2.0
+    // default is 'lunar_new_year'; see project spec / README Conventions table).
     const res = chart({
       solarDate: { year: 2024, month: 2, day: 4 },
       clockTime: { hour: 8, minute: 0 },
       timezone: 'America/Los_Angeles',
       longitude: -122.4443,
+      yearDivide: 'lichun',
       gender: 'male',
     });
     expect(res.diagnostics.yearGanZhi).toBe('甲辰');

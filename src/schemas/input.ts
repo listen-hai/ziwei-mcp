@@ -28,13 +28,22 @@ export function yearRangeMessage(field: string): string {
  */
 export const ZIWEI_DEFAULTS = {
   lunarDateFrame: 'local',
-  yearDivide: 'lichun',
-  horoscopeDivide: 'lichun',
+  // 0.2.0: defaults audited against the ecosystem (iztro's own factory defaults, 测测,
+  // ziwei.pub) and the project owner's ruling. yearDivide/horoscopeDivide now default to
+  // 'lunar_new_year' (正月初一) — the mainstream 紫微斗数 year boundary; 立春 is 八字/子平
+  // 术's boundary, imported logic here, not this system's own. dayDivide now defaults to
+  // 'forward' and fixLeap to true — both were accidental divergences from iztro's own
+  // factory defaults (which 测测/ziwei.pub also follow), never a deliberate convention
+  // choice. See README's Conventions table and docs/spec.md §6 for the full rationale;
+  // 'lichun' remains fully supported (still the only *correct* 立春 implementation in the
+  // ecosystem) via an explicit yearDivide:'lichun'/horoscopeDivide:'lichun'.
+  yearDivide: 'lunar_new_year',
+  horoscopeDivide: 'lunar_new_year',
   ageDivide: 'normal',
-  dayDivide: 'current',
+  dayDivide: 'forward',
   algorithm: 'default',
   astroType: 'heaven',
-  fixLeap: false,
+  fixLeap: true,
   trueSolar: true,
 } as const;
 
@@ -204,13 +213,13 @@ export const ZiweiInputObjectSchema = z.object({
   gender: z.enum(['male', 'female']).describe('Gender: male or female'),
 
   // Zi Wei Dou Shu school/convention switches
-  yearDivide: z.enum(['lichun', 'lunar_new_year']).optional().default(ZIWEI_DEFAULTS.yearDivide).describe('Year-ganzhi boundary: lichun (default, 立春 — determined on the true UTC instant, matching bazi-mcp) or lunar_new_year (正月初一)'),
+  yearDivide: z.enum(['lichun', 'lunar_new_year']).optional().default(ZIWEI_DEFAULTS.yearDivide).describe('Year-ganzhi boundary: lunar_new_year (default, 正月初一 — the mainstream 紫微斗数 convention) or lichun (立春, determined on the true UTC instant, matching bazi-mcp — 八字/子平术\'s own boundary; still the only *correct* 立春 implementation in the ecosystem, just not this system\'s default).'),
   horoscopeDivide: z.enum(['lichun', 'lunar_new_year']).optional().default(ZIWEI_DEFAULTS.horoscopeDivide).describe('Same boundary convention as yearDivide, but for horoscope (运限) year rollover — the calculate_ziwei_horoscope tool determines the 流年 boundary using this convention (see that tool\'s own docs).'),
   ageDivide: z.enum(['normal', 'birthday']).optional().default(ZIWEI_DEFAULTS.ageDivide).describe('Small-limit (小限) boundary: normal (natural year) or birthday. Note: calculate_ziwei_horoscope rejects "birthday" outright (it is the only tool where 小限 is actually surfaced, and iztro\'s "birthday" mode is documented as 以生日为界 but actually flips on the 1st of the lunar month AFTER the birth month, ignoring the birth day entirely — see that tool\'s own docs). This natal tool still accepts it since 小限 has no effect on any natal-chart output field.'),
-  dayDivide: z.enum(['current', 'forward']).optional().default(ZIWEI_DEFAULTS.dayDivide).describe('Late-Zi-hour (晚子时, 23:00-24:00) convention: current (default, counts as the same day) or forward (counts as the next day)'),
+  dayDivide: z.enum(['current', 'forward']).optional().default(ZIWEI_DEFAULTS.dayDivide).describe('Late-Zi-hour (晚子时, 23:00-24:00) convention: forward (default, counts as the next day — iztro\'s own factory default) or current (counts as the same day)'),
   algorithm: z.enum(['default', 'zhongzhou']).optional().default(ZIWEI_DEFAULTS.algorithm).describe('Star-placement algorithm: default (通行版) or zhongzhou (中州派). Verified exhaustively: zhongzhou does NOT change 四化 — e.g. 庚 stays 禄:太阳 权:武曲 科:太阴 忌:天同 and 壬 stays 禄:天梁 权:紫微 科:左辅 忌:武曲, not the documented 中州派 阳武府同 / 梁紫府武 (天府化科; 中州派 also holds 左辅/右弼 take no 四化 at all, which iztro\'s 壬科:左辅 contradicts). zhongzhou only changes 杂曜 (drops 截路/空亡, adds 截空/劫杀/大耗/龙德, swaps 天伤/天使 for 阴年男/阳年女) and how 命主 is derived (年支 instead of 命宫支). If you need 中州派 四化, supply your own table via `config.mutagens`.'),
   astroType: z.enum(['heaven', 'earth', 'human']).optional().default(ZIWEI_DEFAULTS.astroType).describe('Zhongzhou-school chart type (天盘/地盘/人盘). Effective under either `algorithm` value — verified identical whether `algorithm` is \'default\' or \'zhongzhou\'; NOT limited to zhongzhou despite the name. \'earth\'/\'human\' re-seat 命宫 (to 身宫 / 福德宫) and, with it, 五行局, the twelve palace names, the 14 major stars, 长生十二神, and the decadal (大限) sequence. `earthlyBranchOfBodyPalace`, 天寿, and 命主/身主 keep their 天盘 values — they are NOT re-seated. Under algorithm:\'default\' this would leave 命主 contradicting the returned 命宫, so calculate_ziwei rejects astroType:\'earth\'/\'human\' combined with algorithm:\'default\' (see the error message for the fix); calculate_ziwei_horoscope still accepts it since 命主/身主 never appear in its output.'),
-  fixLeap: z.boolean().optional().default(ZIWEI_DEFAULTS.fixLeap).describe('Whether to fix leap-month boundaries at the 15th day (闰月十五日为界修正)'),
+  fixLeap: z.boolean().optional().default(ZIWEI_DEFAULTS.fixLeap).describe('Whether to fix leap-month boundaries at the 15th day (闰月十五日为界修正). Default true (iztro\'s own factory default; 测测 labels this 闰月分界「月中分隔」).'),
   trueSolar: z.boolean().optional().default(ZIWEI_DEFAULTS.trueSolar).describe('Whether to apply True Solar Time correction (default true)'),
 
   // spec §9 / §12: mutagens and brightness are both listed as 透传 (passthrough) —

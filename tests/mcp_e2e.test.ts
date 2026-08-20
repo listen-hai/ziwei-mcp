@@ -272,8 +272,10 @@ describe('MCP end-to-end over stdio (built binary)', () => {
   });
 
   it('serializes a ±60-compensated chart intact over the wire (the case that returned 虚岁 -24 unwrapped)', async () => {
+    // This fixture's whole point is the 立春-window ±60 feed-year fallback (P2a/P2b) —
+    // pin yearDivide:'lichun' explicitly (0.2.0 default is 'lunar_new_year').
     const result = await session.callTool('calculate_ziwei_horoscope', {
-      timezone: 'Etc/GMT-8', longitude: 120, trueSolar: false,
+      timezone: 'Etc/GMT-8', longitude: 120, trueSolar: false, yearDivide: 'lichun',
       solarDate: { year: 2024, month: 2, day: 9 }, clockTime: { hour: 10, minute: 0 }, gender: 'male',
       target: { solarDate: { year: 2054, month: 6, day: 15 }, clockTime: { hour: 13, minute: 0 } },
     });

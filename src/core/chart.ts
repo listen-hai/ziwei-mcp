@@ -143,6 +143,11 @@ export interface NatalBuild {
   offsetMinutes: number;
   isDst: boolean;
   timeIndex: number;
+  /** timeIndex derived from the DST-stripped civil clock alone (no longitude/equation-
+   * of-time correction) — identical to `timeIndex` whenever trueSolar:false. Used to
+   * detect whether True Solar Time correction actually moved this birth across a
+   * timeIndex boundary (see the trueSolarNote diagnostic). */
+  uncorrectedTimeIndex: number;
   trueSolarWall: { year: number; month: number; day: number; hour: number; minute: number };
   longitudeCorrectionMinutes: number;
   equationOfTimeMinutes: number;
@@ -349,6 +354,7 @@ export function buildNatalAstrolabe(input: ValidatedZiweiInput): NatalBuild {
   }
 
   const { timeIndex, trueSolarWall } = solarIdx;
+  const uncorrectedTimeIndex = toTimeIndex(standardWall.hour, standardWall.minute);
   const lunarConv = solar2lunar(fmtDate(trueSolarWall));
 
   // Axis A: year ganzhi via the true UTC instant's Beijing wall clock — exactly like
@@ -478,6 +484,7 @@ export function buildNatalAstrolabe(input: ValidatedZiweiInput): NatalBuild {
     offsetMinutes,
     isDst,
     timeIndex,
+    uncorrectedTimeIndex,
     trueSolarWall,
     longitudeCorrectionMinutes: solarIdx.longitudeCorrectionMinutes,
     equationOfTimeMinutes: solarIdx.equationOfTimeMinutes,
@@ -495,7 +502,7 @@ export function buildNatalAstrolabe(input: ValidatedZiweiInput): NatalBuild {
  */
 export function calculateZiweiChart(input: ValidatedZiweiInput): ZiweiCalculationResult {
   const build = buildNatalAstrolabe(input);
-  const { chart, feedYear, lunarConv, opts, loc, instant, localWall, offsetMinutes, isDst, timeIndex, trueSolarWall, yearGanZhi, shichenAmbiguity, warnings } = build;
+  const { chart, feedYear, lunarConv, opts, loc, instant, localWall, offsetMinutes, isDst, timeIndex, uncorrectedTimeIndex, trueSolarWall, yearGanZhi, shichenAmbiguity, warnings } = build;
 
   const trimmed = trimChart(chart);
   const beijingWallOfInstant = instantToWall(instant, 'Asia/Shanghai');
@@ -509,6 +516,21 @@ export function calculateZiweiChart(input: ValidatedZiweiInput): ZiweiCalculatio
   // the same lunar day `lunar.day` already reports, so adding this unconditionally
   // would be boilerplate, not signal.
   const dayDivideBites = opts.dayDivide === 'forward' && timeIndex === 12;
+
+  // Project owner's ruling (0.2.0, spec item 4): True Solar Time stays on by default,
+  // but must disclose itself — the classical caution 「不准但用三时断，时有差误不可凭」
+  // applies whenever the correction is large enough to matter. The high-value case is
+  // specifically a 时辰 (timeIndex) boundary crossing: that's exactly when this chart
+  // can disagree with a tool that reads the plain civil clock (e.g. a Beijing-time
+  // cross-check). `uncorrectedTimeIndex` already equals `timeIndex` whenever
+  // trueSolar:false (both are then derived from the same DST-stripped standard wall
+  // clock — see buildNatalAstrolabe), so this condition is naturally false in that
+  // case without an extra opts.trueSolar check. Deliberately silent when the
+  // correction doesn't cross a boundary — firing on every chart would be boilerplate,
+  // not signal, and would get ignored exactly like boilerplate does.
+  const trueSolarCrossedBoundary = timeIndex !== uncorrectedTimeIndex;
+  const totalCorrectionMinutes = build.longitudeCorrectionMinutes + build.equationOfTimeMinutes;
+  const shichenLabel = (ti: number) => `${timeIndexToShichen(ti)}${ti === 0 ? ' 早子时' : ti === 12 ? ' 晚子时' : ''} (timeIndex ${ti})`;
 
   const diagnostics: ZiweiDiagnostics = {
     wallClock: `${fmtDateTime(localWall)} (${loc.timezone})`,
@@ -532,6 +554,11 @@ export function calculateZiweiChart(input: ValidatedZiweiInput): ZiweiCalculatio
       ? {
           starPlacementLunarDay: lunarConv.lunarDay + 1,
           dayDivideNote: `The birth's own lunar date is day ${lunarConv.lunarDay} (see \`lunar.day\`), but this birth falls in 晚子时 (23:00-24:00 local true solar time, timeIndex 12) and config.dayDivide is 'forward'. Under that combination, iztro places 紫微 and every star derived from it as if the birth were on lunar day ${lunarConv.lunarDay + 1} instead (see \`starPlacementLunarDay\`) — iztro's own display fields do not reflect that shift, which is exactly why this project never passes them through (see project spec §5 "Z2"). \`lunar.day\` above is, and remains, the birth's true lunar date; only star placement used the following day.`,
+        }
+      : {}),
+    ...(trueSolarCrossedBoundary
+      ? {
+          trueSolarNote: `True Solar Time correction moved this birth across a 时辰 boundary: local true solar time (Axis B, ${fmtDateTime(trueSolarWall)}) falls in ${shichenLabel(timeIndex)}, while the uncorrected civil clock (DST-stripped only, no longitude/equation-of-time correction) would have fallen in ${shichenLabel(uncorrectedTimeIndex)} — a correction of ${totalCorrectionMinutes.toFixed(1)} minutes (${build.longitudeCorrectionMinutes.toFixed(1)} longitude + ${build.equationOfTimeMinutes.toFixed(1)} equation of time). This is exactly the situation where this chart can disagree with a tool that reads the plain civil clock (e.g. a Beijing-time cross-check) — the soul palace, body palace and several star placements depend on timeIndex. True Solar Time is an astronomical correction, not certainty about which 时辰 governs a birth this close to the boundary: 「不准但用三时断，时有差误不可凭」 — treat a chart this close to a 时辰 boundary with appropriate caution, and double-check the exact birth minute if possible.`,
         }
       : {}),
     shichenAmbiguity,

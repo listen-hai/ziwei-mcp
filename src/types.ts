@@ -97,6 +97,15 @@ export interface ZiweiDiagnostics {
    * Absent for every other combination of dayDivide/timeIndex, where the two never
    * diverge. */
   dayDivideNote?: string;
+  /** True Solar Time disclosure (project owner's ruling, spec item 4): present only
+   * when the correction actually moved this birth across a 时辰 (timeIndex) boundary
+   * relative to the uncorrected civil clock — the one case where this chart can
+   * disagree with a tool that uses the plain civil clock (e.g. a Beijing-time
+   * cross-check). Absent otherwise (including whenever trueSolar:false, since then
+   * the corrected and uncorrected timeIndex are identical by construction) — this is
+   * deliberately not boilerplate that fires on every chart. Carries the classical
+   * caution 「不准但用三时断，时有差误不可凭」 per the project owner. */
+  trueSolarNote?: string;
   shichenAmbiguity?: {
     isAmbiguous: boolean;
     candidateTimeIndexes: number[];

@@ -143,9 +143,14 @@ describe('Global multi-region: worldwide UTC offsets and DST', () => {
     expect(moscow.diagnostics.yearGanZhi).toBe('壬戌');
 
     // US War Time: Phoenix 1944 was on MST (UTC-7), not war time, at this instant.
+    // This assertion's own subject is the historical DST/offset handling, not the
+    // year-boundary convention — pin yearDivide:'lichun' explicitly so the 立春
+    // assertion below keeps testing what it was written to test (0.2.0 default is
+    // 'lunar_new_year', under which 1944-02-04 — after 正月初一 1944-01-25 — would
+    // already read 甲申, not 癸未).
     const phoenix = chart({
       timezone: 'America/Phoenix', longitude: -112.074,
-      solarDate: { year: 1944, month: 2, day: 4 }, clockTime: { hour: 4, minute: 9 }, gender: 'male',
+      solarDate: { year: 1944, month: 2, day: 4 }, clockTime: { hour: 4, minute: 9 }, yearDivide: 'lichun', gender: 'male',
     });
     expect(phoenix.diagnostics.utcOffset).toBe('-07:00');
     expect(phoenix.diagnostics.axisB_localTrueSolarTime).toBe('1944-02-04 03:26');
@@ -218,7 +223,14 @@ function runBattery(
 
       let res;
       try {
-        res = chart({ timezone, longitude, solarDate: { year, month, day }, clockTime: { hour, minute }, gender });
+        // dayDivide:'current' pinned deliberately: this battery's oracle (rule (a)
+        // above) only knows how to skip star-placement checks for leap months, not
+        // for the Z2 dayDivide:'forward' + timeIndex-12 desync (iztro's own known
+        // 紫微 lunarDay+1 shift — dedicated coverage in invariant.test.ts's
+        // dayDivideNote test). Pinning keeps this battery testing what it always
+        // tested — global timezone/DST handling + star-placement self-consistency —
+        // without confounding it with the 0.2.0 dayDivide default change.
+        res = chart({ timezone, longitude, solarDate: { year, month, day }, clockTime: { hour, minute }, dayDivide: 'current', gender });
       } catch (err) {
         const msg = (err as Error).message;
         // Correct refusals: the wall clock genuinely did not exist, or genuinely

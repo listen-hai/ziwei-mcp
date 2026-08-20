@@ -296,9 +296,12 @@ describe('8.2 feed-year selection (probe-findings P2a/P2b)', () => {
    * along the 60-year ganzhi cycle instead.
    */
   it('falls back 60 years when the nearest ganzhi-matching lunar year has too short a 腊月', () => {
+    // This case's whole point is the 立春-boundary crash-avoidance fallback (P2a/P2b) —
+    // pin yearDivide:'lichun' explicitly (0.2.0 default is 'lunar_new_year', under
+    // which 2024-02-09 — before 正月初一 2024-02-10 — never reaches this fallback at all).
     const res = chart({
       solarDate: { year: 2024, month: 2, day: 9 }, clockTime: { hour: 12, minute: 0 },
-      timezone: 'Asia/Shanghai', longitude: 120, gender: 'male',
+      timezone: 'Asia/Shanghai', longitude: 120, yearDivide: 'lichun', gender: 'male',
     });
 
     expect(res.lunar).toMatchObject({ year: 2023, month: 12, day: 30 });
