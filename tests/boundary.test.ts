@@ -680,10 +680,23 @@ describe('8.2 Location resolution and `place` conflicts', () => {
     expect(lookupCity('Tacoma')[0].timezone).toBe('America/Los_Angeles');
 
     expect(() => resolveLocation({ place: 'NonExistentCity999' })).toThrow('Could not recognize birth place');
-    // "Los Angeles" matches both the US and the Chilean city; guessing would be worse
-    // than failing, so the resolver lists candidates instead.
+
+    // These servers never guess. "Los Angeles" also names a town in Bio-Bio,
+    // Chile; a ~60x population gap makes the US city likely, not certain, and
+    // a wrong timezone yields a complete, plausible chart for someone else.
+    // The caller is an agent that can ask, so the resolver lists candidates
+    // with the fields needed to ask a good question and refuses.
     expect(() => resolveLocation({ place: 'Los Angeles' })).toThrow('matched multiple candidate cities');
     expect(() => resolveLocation({ place: 'San Jose' })).toThrow('matched multiple candidate cities');
+
+    // One timezone is not one place either: Columbus OH and Columbus GA share
+    // America/New_York but sit 2 deg apart in longitude -- 8 minutes of true
+    // solar time, enough to cross a 时辰 boundary.
+    expect(() => resolveLocation({ place: 'Columbus' })).toThrow('matched multiple candidate cities');
+
+    // ...but identical coordinates under two names are one location, not an
+    // ambiguity: Kansas City MO and KS are adjacent and share a data point.
+    expect(resolveLocation({ place: 'Kansas City' }).timezone).toBe('America/Chicago');
   });
 
   it('keeps same-name cities as distinct candidates instead of collapsing them', () => {
