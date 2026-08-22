@@ -25,3 +25,4 @@ docs/
 
 # Generated knowledge graph (rebuildable via /graphify)
 graphify-out/
+CLAUDE.md
