@@ -10,7 +10,7 @@ import { parseZiweiInput, LookupLocationSchema, ZiweiInputObjectSchema } from '.
 import { parseZiweiHoroscopeInput, HoroscopeTargetSchema } from '../schemas/horoscope';
 import { calculateZiweiChart } from '../core/chart';
 import { calculateZiweiHoroscope } from '../core/horoscope';
-import { lookupCity } from '../geo/resolver';
+import { lookupCity, lookupCityWithCount } from '../geo/resolver';
 import rootPkg from '../../package.json';
 
 // A record schema keyed by an enum (StarNameEnum) rejects every invalid key as its own
@@ -380,7 +380,7 @@ export function createZiweiMcpServer(): Server {
 
       if (name === 'lookup_location') {
         const { query } = LookupLocationSchema.parse(args);
-        const cities = lookupCity(query);
+        const { matched, results: cities } = lookupCityWithCount(query);
 
         return {
           content: [
@@ -389,7 +389,14 @@ export function createZiweiMcpServer(): Server {
               text: JSON.stringify(
                 {
                   query,
-                  count: cities.length,
+                  // TRUE match count, not the post-cap length: a capped list
+                  // reporting its own size tells the caller the search was
+                  // exhaustive when it was not ("Santa" matches 37, returns 10).
+                  matched,
+                  shown: cities.length,
+                  ...(matched > cities.length
+                    ? { note: `Showing the ${cities.length} most populous of ${matched} matches. Narrow the query if none is right -- do not assume the intended city is in this list.` }
+                    : {}),
                   results: cities,
                 },
                 null,

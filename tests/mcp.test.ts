@@ -109,7 +109,10 @@ describe('MCP tools/call happy paths', () => {
     const res = await call('lookup_location', { query: 'Urumqi' });
     expect(res.isError).toBeFalsy();
     const payload = JSON.parse(res.content[0].text);
-    expect(payload.count).toBeGreaterThan(0);
+    // `count` became `matched` (true hits) plus `shown` (after the cap): a
+    // capped list reporting its own length claimed an exhaustive search.
+    expect(payload.matched).toBeGreaterThan(0);
+    expect(payload.shown).toBe(payload.results.length);
     expect(payload.results[0].name).toBe('Urumqi');
     expect(payload.results[0].timezone).toBe('Asia/Shanghai');
     expect(payload.results[0].alternateTimezones).toEqual(['Asia/Urumqi']);
