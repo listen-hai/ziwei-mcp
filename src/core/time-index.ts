@@ -243,9 +243,13 @@ export function shichenCandidateTimeIndexes(params: {
           longitude: params.longitude,
         });
         candidates.add(applied.timeIndex);
-      } catch {
-        // Gap: this occurrence doesn't exist, skip it. (A fold never throws here
-        // since we're sampling each occurrence explicitly via `fold`.)
+      } catch (err) {
+        // Only a DST spring-forward gap is expected: that occurrence genuinely
+        // does not exist, so skipping it is correct. (A fold never throws here
+        // since we sample each occurrence explicitly via `fold`.) Anything else
+        // would silently drop a candidate time index -- under-reporting the
+        // ambiguity we are here to measure -- so rethrow it.
+        if (!(err instanceof Error) || !/spring-forward gap/.test(err.message)) throw err;
       }
     }
   }

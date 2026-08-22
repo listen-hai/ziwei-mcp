@@ -10,7 +10,7 @@ import { parseZiweiInput, LookupLocationSchema, ZiweiInputObjectSchema } from '.
 import { parseZiweiHoroscopeInput, HoroscopeTargetSchema } from '../schemas/horoscope';
 import { calculateZiweiChart } from '../core/chart';
 import { calculateZiweiHoroscope } from '../core/horoscope';
-import { lookupCity, lookupCityWithCount } from '../geo/resolver';
+import { lookupCity, lookupCityWithCount, LocationError } from '../geo/resolver';
 import rootPkg from '../../package.json';
 
 // A record schema keyed by an enum (StarNameEnum) rejects every invalid key as its own
@@ -327,7 +327,7 @@ export function createZiweiMcpServer(): Server {
     },
     {
       name: 'lookup_location',
-      description: 'Look up a city\'s geographic coordinates (latitude, longitude) and official IANA timezone. IMPORTANT: Use ENGLISH city names only. If the user provides a name in another language, translate it to English first (e.g. 东京 → "Tokyo", 巴黎 → "Paris"). Covers 7,329 cities across 227 countries.',
+      description: 'Look up a city\'s coordinates and IANA timezone. Use this BEFORE a chart tool whenever the place name might be ambiguous -- it is cheaper than a refused chart call. IMPORTANT: English city names only; translate first (东京 -> "Tokyo"). When more than one city comes back, ASK the user which one they mean -- do not pick the first, the largest, or the most likely. The response reports `matched` (true hit count) and `shown` (after the cap), so a capped list never reads as an exhaustive one. Covers 7,329 cities across 227 countries.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -409,6 +409,13 @@ export function createZiweiMcpServer(): Server {
 
       throw new Error(`Unknown MCP tool: ${name}`);
     } catch (err: unknown) {
+      // A location refusal ships its candidate list as JSON rather than prose:
+      // the agent should not have to parse English to find out which cities
+      // matched. `code` is stable enough to branch on, and `matched` keeps a
+      // capped list from reading as an exhaustive one.
+      if (err instanceof LocationError) {
+        return { isError: true, content: [{ type: 'text', text: JSON.stringify(err.toPayload(), null, 2) }] };
+      }
       const errMsg = err instanceof z.ZodError
         ? formatZodError(err)
         : err instanceof Error ? err.message : String(err);
