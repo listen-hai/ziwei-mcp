@@ -134,7 +134,23 @@ Under `yearDivide:'lichun'`, age reckoning uses the 立春-designated birth year
 
 ### 3. `lookup_location`
 
-Resolves an English city name to longitude, latitude and IANA timezone across 7,329 cities in 227 countries. Ambiguous names (e.g. "Los Angeles", which exists in both the US and Chile) are refused with the candidate list rather than guessed.
+Resolves an English city name to longitude, latitude and IANA timezone across 7,329 cities in 227 countries.
+
+**Ambiguous names are refused, never guessed.** "Los Angeles" exists in both the US and Chile; "Columbus" is two cities 2° of longitude apart that happen to share a timezone — 8 minutes of true solar time, enough to cross a 時辰 boundary. Sharing a timezone is not being the same place. Entries at genuinely identical coordinates (Kansas City MO and KS) still resolve: recognising that two records describe one location is a fact about the data, not a guess about intent.
+
+A refusal returns a structured payload the calling agent can act on without parsing prose:
+
+```jsonc
+{
+  "code": "ambiguous_place",
+  "message": "…",
+  "matched": 4,          // true hit count, so a capped list never reads as exhaustive
+  "candidates": [ { "name": "San Jose", "province": "California", "country": "US",
+                    "latitude": 37.3, "longitude": -121.85, "timezone": "America/Los_Angeles" } ]
+}
+```
+
+Candidates carry identifying fields only. Population is deliberately absent: it is a likelihood prior, not something anyone recognises their birthplace by, and publishing it would move the guess this server refuses to make into the agent's prompt.
 
 ---
 
